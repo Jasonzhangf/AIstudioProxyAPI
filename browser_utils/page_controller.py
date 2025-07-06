@@ -3,6 +3,8 @@ PageController模块
 封装了所有与Playwright页面直接交互的复杂逻辑。
 """
 import asyncio
+import random
+import string
 from typing import Callable, List, Dict, Any, Optional
 
 from playwright.async_api import Page as AsyncPage, expect as expect_async, TimeoutError
@@ -11,7 +13,7 @@ from config import (
     TEMPERATURE_INPUT_SELECTOR, MAX_OUTPUT_TOKENS_SELECTOR, STOP_SEQUENCE_INPUT_SELECTOR,
     MAT_CHIP_REMOVE_BUTTON_SELECTOR, TOP_P_INPUT_SELECTOR, SUBMIT_BUTTON_SELECTOR,
     CLEAR_CHAT_BUTTON_SELECTOR, CLEAR_CHAT_CONFIRM_BUTTON_SELECTOR, OVERLAY_SELECTOR,
-    PROMPT_TEXTAREA_SELECTOR, RESPONSE_CONTAINER_SELECTOR, RESPONSE_TEXT_SELECTOR,
+    PROMPT_TEXTAREA_SELECTOR, PROMPT_TEXTAREA_SELECTOR_ALT, RESPONSE_CONTAINER_SELECTOR, RESPONSE_TEXT_SELECTOR,
     EDIT_MESSAGE_BUTTON_SELECTOR,USE_URL_CONTEXT_SELECTOR,UPLOAD_BUTTON_SELECTOR,
     SET_THINKING_BUDGET_TOGGLE_SELECTOR, THINKING_BUDGET_INPUT_SELECTOR,
     GROUNDING_WITH_GOOGLE_SEARCH_TOGGLE_SELECTOR
@@ -36,6 +38,91 @@ class PageController:
         """检查客户端是否断开连接。"""
         if check_client_disconnected(stage):
             raise ClientDisconnectedError(f"[{self.req_id}] Client disconnected at stage: {stage}")
+
+    async def _get_prompt_textarea_locator(self):
+        """智能获取提示输入框的定位器"""
+        # 先尝试主选择器
+        primary_locator = self.page.locator(PROMPT_TEXTAREA_SELECTOR)
+        try:
+            # 检查主选择器是否可见
+            await expect_async(primary_locator).to_be_visible(timeout=2000)
+            self.logger.info(f"[{self.req_id}] 使用主提示输入框选择器: {PROMPT_TEXTAREA_SELECTOR}")
+            return primary_locator
+        except Exception:
+            # 主选择器不可用，尝试备用选择器
+            alt_locator = self.page.locator(PROMPT_TEXTAREA_SELECTOR_ALT)
+            try:
+                await expect_async(alt_locator).to_be_visible(timeout=2000)
+                self.logger.info(f"[{self.req_id}] 使用备用提示输入框选择器: {PROMPT_TEXTAREA_SELECTOR_ALT}")
+                return alt_locator
+            except Exception as e:
+                self.logger.error(f"[{self.req_id}] 所有提示输入框选择器都不可用")
+                # 返回主选择器，让上层处理错误
+                return primary_locator
+
+    async def _humanized_input(self, locator, text: str, check_client_disconnected: Callable):
+        """人性化输入：先输入随机字符，删除，然后输入真实内容"""
+        try:
+            # 生成3个随机字符
+            random_chars = ''.join(random.choices(string.ascii_lowercase, k=3))
+            self.logger.info(f"[{self.req_id}] 开始人性化输入，随机字符: {random_chars}")
+            
+            # 确保输入框获得焦点
+            await locator.focus(timeout=3000)
+            await self._check_disconnect(check_client_disconnected, "人性化输入 - 获得焦点后")
+            await asyncio.sleep(0.1)
+            
+            # 先输入随机字符
+            for char in random_chars:
+                await self.page.keyboard.type(char)
+                await asyncio.sleep(random.uniform(0.05, 0.15))  # 随机延迟模拟真实打字
+            
+            await self._check_disconnect(check_client_disconnected, "人性化输入 - 随机字符输入后")
+            await asyncio.sleep(random.uniform(0.2, 0.5))  # 短暂停顿
+            
+            # 删除随机字符（使用退格键）
+            for _ in range(len(random_chars)):
+                await self.page.keyboard.press('Backspace')
+                await asyncio.sleep(random.uniform(0.03, 0.08))
+            
+            await self._check_disconnect(check_client_disconnected, "人性化输入 - 删除随机字符后")
+            
+            # 更长的思考停顿时间，模拟用户思考
+            think_time = random.uniform(0.5, 1.5)
+            self.logger.info(f"[{self.req_id}] 模拟思考停顿 {think_time:.2f} 秒...")
+            await asyncio.sleep(think_time)
+            
+            # 输入真实内容
+            self.logger.info(f"[{self.req_id}] 开始输入真实内容 ({len(text)} 字符)")
+            await self.page.keyboard.type(text)
+            await self._check_disconnect(check_client_disconnected, "人性化输入 - 真实内容输入后")
+            
+            # 触发必要的事件
+            await locator.evaluate(
+                '''
+                (element) => {
+                    element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                    element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                }
+                '''
+            )
+            
+            self.logger.info(f"[{self.req_id}] ✅ 人性化输入完成")
+            
+        except Exception as e:
+            self.logger.error(f"[{self.req_id}] ❌ 人性化输入失败: {e}")
+            # 如果人性化输入失败，回退到直接填充
+            await locator.fill(text, timeout=5000)
+            await locator.evaluate(
+                '''
+                (element, text) => {
+                    element.value = text;
+                    element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                    element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                }
+                ''',
+                text
+            )
 
     async def adjust_parameters(self, request_params: Dict[str, Any], page_params_cache: Dict[str, Any], params_cache_lock: asyncio.Lock, model_id_to_use: str, parsed_model_list: List[Dict[str, Any]], check_client_disconnected: Callable):
         """调整所有请求参数。"""
@@ -147,8 +234,8 @@ class PageController:
             await self._check_disconnect(check_client_disconnected, "思考预算调整 - 输入框可见后")
             
             self.logger.info(f"[{self.req_id}] 设置思考预算为: {token_budget}")
-            await budget_input_locator.fill(str(token_budget), timeout=5000)
-            await self._check_disconnect(check_client_disconnected, "思考预算调整 - 填充输入框后")
+            await self._humanized_input(budget_input_locator, str(token_budget), check_client_disconnected)
+            await self._check_disconnect(check_client_disconnected, "思考预算调整 - 人性化输入后")
 
             # 验证
             await asyncio.sleep(0.1)
@@ -333,8 +420,8 @@ class PageController:
                     page_params_cache["temperature"] = current_temp_float
                 else:
                     self.logger.info(f"[{self.req_id}] 页面温度 ({current_temp_float}) 与请求温度 ({clamped_temp}) 不同，正在更新...")
-                    await temp_input_locator.fill(str(clamped_temp), timeout=5000)
-                    await self._check_disconnect(check_client_disconnected, "温度调整 - 填充输入框后")
+                    await self._humanized_input(temp_input_locator, str(clamped_temp), check_client_disconnected)
+                    await self._check_disconnect(check_client_disconnected, "温度调整 - 人性化输入后")
 
                     await asyncio.sleep(0.1)
                     new_temp_str = await temp_input_locator.input_value(timeout=3000)
@@ -401,8 +488,8 @@ class PageController:
                     page_params_cache["max_output_tokens"] = current_max_tokens_int
                 else:
                     self.logger.info(f"[{self.req_id}] 页面最大输出 Tokens ({current_max_tokens_int}) 与请求值 ({clamped_max_tokens}) 不同，正在更新...")
-                    await max_tokens_input_locator.fill(str(clamped_max_tokens), timeout=5000)
-                    await self._check_disconnect(check_client_disconnected, "最大输出Token调整 - 填充输入框后")
+                    await self._humanized_input(max_tokens_input_locator, str(clamped_max_tokens), check_client_disconnected)
+                    await self._check_disconnect(check_client_disconnected, "最大输出Token调整 - 人性化输入后")
 
                     await asyncio.sleep(0.1)
                     new_max_tokens_str = await max_tokens_input_locator.input_value(timeout=3000)
@@ -473,7 +560,7 @@ class PageController:
                 if normalized_requested_stops:
                     await expect_async(stop_input_locator).to_be_visible(timeout=5000)
                     for seq in normalized_requested_stops:
-                        await stop_input_locator.fill(seq, timeout=3000)
+                        await self._humanized_input(stop_input_locator, seq, check_client_disconnected)
                         await stop_input_locator.press("Enter", timeout=3000)
                         await asyncio.sleep(0.2)
 
@@ -505,8 +592,8 @@ class PageController:
 
             if abs(current_top_p_float - clamped_top_p) > 1e-9:
                 self.logger.info(f"[{self.req_id}] 页面 Top P ({current_top_p_float}) 与请求值 ({clamped_top_p}) 不同，正在更新...")
-                await top_p_input_locator.fill(str(clamped_top_p), timeout=5000)
-                await self._check_disconnect(check_client_disconnected, "Top P 调整 - 填充输入框后")
+                await self._humanized_input(top_p_input_locator, str(clamped_top_p), check_client_disconnected)
+                await self._check_disconnect(check_client_disconnected, "Top P 调整 - 人性化输入后")
 
                 # 验证设置是否成功
                 await asyncio.sleep(0.1)
@@ -666,7 +753,9 @@ class PageController:
     async def submit_prompt(self, prompt: str,image_list: List, check_client_disconnected: Callable):
         """提交提示到页面。"""
         self.logger.info(f"[{self.req_id}] 填充并提交提示 ({len(prompt)} chars)...")
-        prompt_textarea_locator = self.page.locator(PROMPT_TEXTAREA_SELECTOR)
+        
+        # 使用智能选择器获取正确的文本框
+        prompt_textarea_locator = await self._get_prompt_textarea_locator()
         autosize_wrapper_locator = self.page.locator('ms-prompt-input-wrapper ms-autosize-textarea')
         submit_button_locator = self.page.locator(SUBMIT_BUTTON_SELECTOR)
 
@@ -674,19 +763,16 @@ class PageController:
             await expect_async(prompt_textarea_locator).to_be_visible(timeout=5000)
             await self._check_disconnect(check_client_disconnected, "After Input Visible")
 
-            # 使用 JavaScript 填充文本
-            await prompt_textarea_locator.evaluate(
-                '''
-                (element, text) => {
-                    element.value = text;
-                    element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-                    element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-                }
-                ''',
-                prompt
-            )
-            await autosize_wrapper_locator.evaluate('(element, text) => { element.setAttribute("data-value", text); }', prompt)
-            await self._check_disconnect(check_client_disconnected, "After Input Fill")
+            # 使用人性化输入
+            await self._humanized_input(prompt_textarea_locator, prompt, check_client_disconnected)
+            
+            # 尝试设置autosize属性，如果失败则跳过
+            try:
+                await autosize_wrapper_locator.evaluate('(element, text) => { element.setAttribute("data-value", text); }', prompt)
+            except Exception as attr_err:
+                self.logger.warning(f"[{self.req_id}] 设置autosize属性失败，继续执行: {attr_err}")
+            
+            await self._check_disconnect(check_client_disconnected, "After Humanized Input Fill")
 
             # 上传
             if len(image_list) > 0:

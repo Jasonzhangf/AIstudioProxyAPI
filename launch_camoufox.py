@@ -340,6 +340,35 @@ def kill_process_interactive(pid: int) -> bool:
         logger.error(f"    终止 PID {pid} 时发生意外错误: {e}", exc_info=True)
     return success
 
+def auto_clear_port(port: int) -> bool:
+    """自动清理占用指定端口的进程"""
+    logger.info(f"🔍 检查端口 {port} 是否被占用...")
+    
+    pids = find_pids_on_port(port)
+    if not pids:
+        logger.info(f"  ✅ 端口 {port} 当前可用。")
+        return True
+    
+    logger.warning(f"  ⚠️ 端口 {port} 被以下进程占用: {pids}")
+    logger.info(f"  🔧 自动清理端口 {port}...")
+    
+    success_count = 0
+    for pid in pids:
+        if kill_process_interactive(pid):
+            success_count += 1
+    
+    # 等待进程完全退出
+    time.sleep(2)
+    
+    # 再次检查端口状态
+    remaining_pids = find_pids_on_port(port)
+    if not remaining_pids:
+        logger.info(f"  ✅ 端口 {port} 清理成功，现在可用。")
+        return True
+    else:
+        logger.error(f"  ❌ 端口 {port} 清理失败，仍被进程占用: {remaining_pids}")
+        return False
+
 # --- 带超时的用户输入函数 (from dev - more robust Windows implementation) ---
 def input_with_timeout(prompt_message: str, timeout_seconds: int = 30) -> str:
     print(prompt_message, end='', flush=True)
@@ -607,6 +636,19 @@ if __name__ == "__main__":
 
         print(f"--- [内部Camoufox启动] 模式: {internal_mode_arg}, 认证文件: {os.path.basename(auth_file) if auth_file else '无'}, "
               f"Camoufox端口: {camoufox_port_internal}, 代理: {camoufox_proxy_internal or '无'}, 模拟OS: {camoufox_os_internal} ---", flush=True)
+        
+        # 内部启动模式也检查并清理端口
+        print(f"--- [内部Camoufox启动] 检查端口 {camoufox_port_internal} 是否可用 ... ---", flush=True)
+        pids_on_port = find_pids_on_port(camoufox_port_internal)
+        if pids_on_port:
+            print(f"⚠️ 端口 {camoufox_port_internal} 被进程占用: {pids_on_port}。尝试自动清理...", flush=True)
+            if auto_clear_port(camoufox_port_internal):
+                print(f"✅ 端口 {camoufox_port_internal} 清理成功。", flush=True)
+            else:
+                print(f"❌ 端口 {camoufox_port_internal} 清理失败，继续尝试启动...", flush=True)
+        else:
+            print(f"✅ 端口 {camoufox_port_internal} 可用。", flush=True)
+        
         print(f"--- [内部Camoufox启动] 正在调用 camoufox.server.launch_server ... ---", flush=True)
         
         try:
@@ -760,6 +802,13 @@ if __name__ == "__main__":
 
 
     logger.info("--- 步骤 3: 准备并启动 Camoufox 内部进程 ---")
+    
+    # 自动清理Camoufox调试端口
+    camoufox_port = args.camoufox_debug_port
+    if not auto_clear_port(camoufox_port):
+        logger.error(f"❌ 无法清理端口 {camoufox_port}，可能影响Camoufox启动。")
+        # 继续尝试启动，让Camoufox自己处理端口冲突
+    
     captured_ws_endpoint = None
     effective_active_auth_json_path = None # from dev
 
