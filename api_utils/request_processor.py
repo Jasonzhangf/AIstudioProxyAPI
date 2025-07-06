@@ -8,7 +8,7 @@ import json
 import os
 import random
 import time
-from typing import Optional, Tuple, Callable, AsyncGenerator
+from typing import Optional, Tuple, Callable, AsyncGenerator, List
 from asyncio import Event, Future
 
 from fastapi import HTTPException, Request
@@ -181,13 +181,92 @@ async def _setup_disconnect_monitoring(req_id: str, http_request: Request, resul
     return client_disconnected_event, disconnect_check_task, check_client_disconnected
 
 
+async def _attempt_page_recovery_processor(req_id: str, context: dict) -> bool:
+    """在请求处理器中尝试恢复页面状态"""
+    try:
+        import server
+        logger = context['logger']
+        
+        logger.info(f"[{req_id}] 请求处理器中尝试恢复页面状态...")
+        
+        # 检查浏览器实例是否存在
+        if not server.browser_instance or not server.browser_instance.is_connected():
+            logger.warning(f"[{req_id}] 浏览器实例不可用，无法进行页面恢复")
+            return False
+        
+        # 尝试恢复现有页面
+        if server.page_instance and not server.page_instance.is_closed():
+            try:
+                from config import AI_STUDIO_URL_PATTERN
+                target_url = f"https://{AI_STUDIO_URL_PATTERN}/prompts/new_chat"
+                logger.info(f"[{req_id}] 尝试刷新页面到: {target_url}")
+                
+                await server.page_instance.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                
+                current_url = server.page_instance.url
+                if AI_STUDIO_URL_PATTERN in current_url and "/prompts/" in current_url:
+                    logger.info(f"[{req_id}] 页面刷新成功: {current_url}")
+                    server.is_page_ready = True
+                    return True
+                else:
+                    logger.warning(f"[{req_id}] 页面刷新失败，URL不正确: {current_url}")
+                    
+            except Exception as refresh_error:
+                logger.error(f"[{req_id}] 页面刷新失败: {refresh_error}")
+        
+        # 尝试创建新页面
+        try:
+            from config import AI_STUDIO_URL_PATTERN
+            logger.info(f"[{req_id}] 尝试创建新页面...")
+            contexts = server.browser_instance.contexts
+            if contexts:
+                context_obj = contexts[0]
+                new_page = await context_obj.new_page()
+                target_url = f"https://{AI_STUDIO_URL_PATTERN}/prompts/new_chat"
+                
+                await new_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                
+                current_url = new_page.url
+                if AI_STUDIO_URL_PATTERN in current_url and "/prompts/" in current_url:
+                    # 关闭旧页面
+                    if server.page_instance and not server.page_instance.is_closed():
+                        await server.page_instance.close()
+                    
+                    # 设置新页面
+                    server.page_instance = new_page
+                    server.is_page_ready = True
+                    
+                    logger.info(f"[{req_id}] 新页面创建成功: {current_url}")
+                    return True
+                else:
+                    logger.warning(f"[{req_id}] 新页面URL不正确: {current_url}")
+                    await new_page.close()
+                    
+        except Exception as create_error:
+            logger.error(f"[{req_id}] 创建新页面失败: {create_error}")
+        
+        logger.warning(f"[{req_id}] 页面恢复失败")
+        return False
+        
+    except Exception as e:
+        context['logger'].error(f"[{req_id}] 页面恢复过程中发生异常: {e}")
+        return False
+
+
 async def _validate_page_status(req_id: str, context: dict, check_client_disconnected: Callable) -> None:
     """验证页面状态"""
     page = context['page']
     is_page_ready = context['is_page_ready']
     
     if not page or page.is_closed() or not is_page_ready:
-        raise HTTPException(status_code=503, detail=f"[{req_id}] AI Studio 页面丢失或未就绪。", headers={"Retry-After": "30"})
+        # 尝试恢复页面
+        recovery_success = await _attempt_page_recovery_processor(req_id, context)
+        if not recovery_success:
+            raise HTTPException(status_code=503, detail=f"[{req_id}] AI Studio 页面丢失或未就绪。", headers={"Retry-After": "30"})
+        # 更新上下文中的页面信息
+        import server
+        context['page'] = server.page_instance
+        context['is_page_ready'] = server.is_page_ready
     
     check_client_disconnected("Initial Page Check")
 
@@ -250,17 +329,17 @@ async def _handle_parameter_cache(req_id: str, context: dict) -> None:
             page_params_cache["last_known_model_id_for_params"] = current_ai_studio_model_id
 
 
-async def _prepare_and_validate_request(req_id: str, request: ChatCompletionRequest, check_client_disconnected: Callable) -> str:
+async def _prepare_and_validate_request(req_id: str, request: ChatCompletionRequest, check_client_disconnected: Callable) -> Tuple[str, List]:
     """准备和验证请求"""
     try:
         validate_chat_request(request.messages, req_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"[{req_id}] 无效请求: {e}")
     
-    prepared_prompt = prepare_combined_prompt(request.messages, req_id)
+    prepared_prompt, image_list = prepare_combined_prompt(request.messages, req_id)
     check_client_disconnected("After Prompt Prep")
     
-    return prepared_prompt
+    return prepared_prompt, image_list
 
 async def _handle_response_processing(req_id: str, request: ChatCompletionRequest, page: AsyncPage,
                                     context: dict, result_future: Future,

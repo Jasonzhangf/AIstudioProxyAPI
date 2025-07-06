@@ -7,7 +7,7 @@ import asyncio
 import json
 import time
 import datetime
-from typing import Any, Dict, List, Optional, AsyncGenerator
+from typing import Any, Dict, List, Optional, AsyncGenerator, Tuple
 from asyncio import Queue
 from models import Message
 import re
@@ -241,7 +241,7 @@ def extract_base64_to_local(base64_data: str) -> str:
 
 
 # --- 提示准备函数 ---
-def prepare_combined_prompt(messages: List[Message], req_id: str) -> str:
+def prepare_combined_prompt(messages: List[Message], req_id: str) -> Tuple[str, List]:
     """准备组合提示"""
     from server import logger
     

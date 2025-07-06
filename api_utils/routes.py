@@ -187,7 +187,10 @@ async def chat_completions(
                           not worker_task or worker_task.done()
     
     if service_unavailable:
-        raise HTTPException(status_code=503, detail=f"[{req_id}] 服务当前不可用。请稍后重试。", headers={"Retry-After": "30"})
+        # 尝试自动恢复页面
+        recovery_success = await _attempt_page_recovery(req_id, logger, server_state, browser_page_critical)
+        if not recovery_success:
+            raise HTTPException(status_code=503, detail=f"[{req_id}] 服务当前不可用。请稍后重试。", headers={"Retry-After": "30"})
     
     result_future = Future()
     await request_queue.put({
@@ -212,6 +215,89 @@ async def chat_completions(
     except Exception as e:
         logger.exception(f"[{req_id}] 等待Worker响应时出错")
         raise HTTPException(status_code=500, detail=f"[{req_id}] 服务器内部错误: {e}")
+
+
+# --- 页面恢复相关 ---
+async def _attempt_page_recovery(req_id: str, logger: logging.Logger, server_state: Dict[str, Any], browser_page_critical: bool) -> bool:
+    """尝试自动恢复页面状态"""
+    try:
+        # 导入必要的模块
+        import server
+        from config import AI_STUDIO_URL_PATTERN
+        
+        logger.info(f"[{req_id}] 尝试自动恢复页面状态...")
+        
+        # 如果不是浏览器相关的问题，直接返回失败
+        if not browser_page_critical:
+            logger.info(f"[{req_id}] 非浏览器模式，跳过页面恢复")
+            return False
+        
+        # 检查浏览器实例是否存在
+        if not server.browser_instance or not server.browser_instance.is_connected():
+            logger.warning(f"[{req_id}] 浏览器实例不可用，无法进行页面恢复")
+            return False
+        
+        # 检查页面是否需要恢复
+        if server.page_instance and not server.page_instance.is_closed():
+            try:
+                # 尝试刷新页面到正确的URL
+                target_url = f"https://{AI_STUDIO_URL_PATTERN}/prompts/new_chat"
+                logger.info(f"[{req_id}] 尝试导航到: {target_url}")
+                
+                await server.page_instance.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                
+                # 检查页面是否成功加载
+                current_url = server.page_instance.url
+                if AI_STUDIO_URL_PATTERN in current_url and "/prompts/" in current_url:
+                    logger.info(f"[{req_id}] 页面恢复成功: {current_url}")
+                    server.is_page_ready = True
+                    server_state["is_page_ready"] = True
+                    server_state["is_browser_connected"] = True
+                    return True
+                else:
+                    logger.warning(f"[{req_id}] 页面恢复失败，当前URL: {current_url}")
+                    
+            except Exception as nav_error:
+                logger.error(f"[{req_id}] 页面导航失败: {nav_error}")
+        
+        # 如果页面无法恢复，尝试创建新页面
+        try:
+            logger.info(f"[{req_id}] 尝试创建新页面...")
+            contexts = server.browser_instance.contexts
+            if contexts:
+                context = contexts[0]
+                new_page = await context.new_page()
+                target_url = f"https://{AI_STUDIO_URL_PATTERN}/prompts/new_chat"
+                
+                await new_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                
+                current_url = new_page.url
+                if AI_STUDIO_URL_PATTERN in current_url and "/prompts/" in current_url:
+                    # 关闭旧页面
+                    if server.page_instance and not server.page_instance.is_closed():
+                        await server.page_instance.close()
+                    
+                    # 设置新页面
+                    server.page_instance = new_page
+                    server.is_page_ready = True
+                    server_state["is_page_ready"] = True
+                    server_state["is_browser_connected"] = True
+                    
+                    logger.info(f"[{req_id}] 新页面创建成功: {current_url}")
+                    return True
+                else:
+                    logger.warning(f"[{req_id}] 新页面创建失败，当前URL: {current_url}")
+                    await new_page.close()
+                    
+        except Exception as create_error:
+            logger.error(f"[{req_id}] 创建新页面失败: {create_error}")
+        
+        logger.warning(f"[{req_id}] 页面恢复失败")
+        return False
+        
+    except Exception as e:
+        logger.error(f"[{req_id}] 页面恢复过程中发生异常: {e}")
+        return False
 
 
 # --- 取消请求相关 ---
