@@ -4,9 +4,12 @@ CSS选择器配置模块
 """
 
 # --- 输入相关选择器 ---
-PROMPT_TEXTAREA_SELECTOR = 'ms-prompt-input-wrapper ms-autosize-textarea textarea'
-# 备用选择器，用于包含 prompt-input-wrapper-container 的情况
-PROMPT_TEXTAREA_SELECTOR_ALT = '.prompt-input-wrapper-container textarea'
+# 主选择器：使用更精确的选择器避免匹配多个元素
+PROMPT_TEXTAREA_SELECTOR = 'textarea[aria-label="Type something or tab to choose an example prompt"]'
+# 备用选择器1：另一种aria-label格式
+PROMPT_TEXTAREA_SELECTOR_ALT = 'textarea[aria-label="Start typing a prompt"]'
+# 备用选择器2：通用容器选择器
+PROMPT_TEXTAREA_SELECTOR_ALT2 = '.prompt-input-wrapper-container textarea'
 INPUT_SELECTOR = PROMPT_TEXTAREA_SELECTOR
 INPUT_SELECTOR2 = PROMPT_TEXTAREA_SELECTOR
 

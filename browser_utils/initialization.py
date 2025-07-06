@@ -461,8 +461,8 @@ async def _initialize_page_logic(browser: AsyncBrowser):
     
     try:
         logger.info("创建新的浏览器上下文...")
-        # 禁用viewport限制，让页面自然适应窗口大小
-        context_options: Dict[str, Any] = {'viewport': None}
+        # 设置合理的默认viewport尺寸
+        context_options: Dict[str, Any] = {'viewport': {'width': 1280, 'height': 800}}
         if storage_state_path_to_use:
             context_options['storage_state'] = storage_state_path_to_use
             logger.info(f"   (使用 storage_state='{os.path.basename(storage_state_path_to_use)}')")

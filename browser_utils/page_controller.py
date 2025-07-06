@@ -13,7 +13,7 @@ from config import (
     TEMPERATURE_INPUT_SELECTOR, MAX_OUTPUT_TOKENS_SELECTOR, STOP_SEQUENCE_INPUT_SELECTOR,
     MAT_CHIP_REMOVE_BUTTON_SELECTOR, TOP_P_INPUT_SELECTOR, SUBMIT_BUTTON_SELECTOR,
     CLEAR_CHAT_BUTTON_SELECTOR, CLEAR_CHAT_CONFIRM_BUTTON_SELECTOR, OVERLAY_SELECTOR,
-    PROMPT_TEXTAREA_SELECTOR, PROMPT_TEXTAREA_SELECTOR_ALT, RESPONSE_CONTAINER_SELECTOR, RESPONSE_TEXT_SELECTOR,
+    PROMPT_TEXTAREA_SELECTOR, PROMPT_TEXTAREA_SELECTOR_ALT, PROMPT_TEXTAREA_SELECTOR_ALT2, RESPONSE_CONTAINER_SELECTOR, RESPONSE_TEXT_SELECTOR,
     EDIT_MESSAGE_BUTTON_SELECTOR,USE_URL_CONTEXT_SELECTOR,UPLOAD_BUTTON_SELECTOR,
     SET_THINKING_BUDGET_TOGGLE_SELECTOR, THINKING_BUDGET_INPUT_SELECTOR,
     GROUNDING_WITH_GOOGLE_SEARCH_TOGGLE_SELECTOR
@@ -40,25 +40,26 @@ class PageController:
             raise ClientDisconnectedError(f"[{self.req_id}] Client disconnected at stage: {stage}")
 
     async def _get_prompt_textarea_locator(self):
-        """智能获取提示输入框的定位器"""
-        # 先尝试主选择器
-        primary_locator = self.page.locator(PROMPT_TEXTAREA_SELECTOR)
-        try:
-            # 检查主选择器是否可见
-            await expect_async(primary_locator).to_be_visible(timeout=2000)
-            self.logger.info(f"[{self.req_id}] 使用主提示输入框选择器: {PROMPT_TEXTAREA_SELECTOR}")
-            return primary_locator
-        except Exception:
-            # 主选择器不可用，尝试备用选择器
-            alt_locator = self.page.locator(PROMPT_TEXTAREA_SELECTOR_ALT)
+        """智能获取提示输入框的定位器，尝试多个选择器"""
+        selectors = [
+            (PROMPT_TEXTAREA_SELECTOR, "主选择器"),
+            (PROMPT_TEXTAREA_SELECTOR_ALT, "备用选择器1"),
+            (PROMPT_TEXTAREA_SELECTOR_ALT2, "备用选择器2")
+        ]
+        
+        for selector, desc in selectors:
             try:
-                await expect_async(alt_locator).to_be_visible(timeout=2000)
-                self.logger.info(f"[{self.req_id}] 使用备用提示输入框选择器: {PROMPT_TEXTAREA_SELECTOR_ALT}")
-                return alt_locator
+                locator = self.page.locator(selector)
+                await expect_async(locator).to_be_visible(timeout=2000)
+                self.logger.info(f"[{self.req_id}] 使用{desc}: {selector}")
+                return locator
             except Exception as e:
-                self.logger.error(f"[{self.req_id}] 所有提示输入框选择器都不可用")
-                # 返回主选择器，让上层处理错误
-                return primary_locator
+                self.logger.debug(f"[{self.req_id}] {desc} 不可用: {e}")
+                continue
+        
+        # 如果所有选择器都失败，返回主选择器让上层处理错误
+        self.logger.error(f"[{self.req_id}] 所有提示输入框选择器都不可用")
+        return self.page.locator(PROMPT_TEXTAREA_SELECTOR)
 
     async def _humanized_input(self, locator, text: str, check_client_disconnected: Callable):
         """真实人性化输入：输入随机字符→删除→高效填充→再输入随机字符→删除→发送"""
