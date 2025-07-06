@@ -257,169 +257,6 @@ def _clean_userscript_headers(script_content: str) -> str:
     return '\n'.join(cleaned_lines)
 
 
-async def _setup_adaptive_viewport(page: AsyncPage):
-    """设置自适应viewport，让页面能够响应窗口大小变化"""
-    try:
-        logger.info("-> 设置自适应显示...")
-        
-        # 简化方案：直接使用Playwright的API来处理响应式
-        # 先获取当前窗口大小
-        viewport_size = await page.evaluate("() => ({ width: window.innerWidth, height: window.innerHeight })")
-        logger.info(f"-> 当前窗口大小: {viewport_size['width']}x{viewport_size['height']}")
-        
-        # 注入更简单直接的响应式脚本
-        await page.evaluate("""
-            () => {
-                console.log('Setting up simplified adaptive viewport...');
-                
-                // 直接修改body和html的样式
-                const style = document.createElement('style');
-                style.id = 'adaptive-viewport-style';
-                style.textContent = `
-                    html, body {
-                        width: 100vw !important;
-                        height: 100vh !important;
-                        margin: 0 !important;
-                        padding: 0 !important;
-                        overflow: visible !important;
-                        box-sizing: border-box !important;
-                    }
-                    
-                    /* 确保AI Studio的主容器响应式 */
-                    ms-chat-shell {
-                        width: 100% !important;
-                        height: 100% !important;
-                        max-width: none !important;
-                        min-width: unset !important;
-                    }
-                    
-                    .mat-drawer-container {
-                        width: 100% !important;
-                        height: 100% !important;
-                    }
-                `;
-                
-                // 移除之前的样式
-                const existing = document.getElementById('adaptive-viewport-style');
-                if (existing) existing.remove();
-                
-                document.head.appendChild(style);
-                
-                // 创建强制更新函数
-                window.forceViewportUpdate = function() {
-                    console.log('Forcing viewport update...', window.innerWidth, window.innerHeight);
-                    
-                    // 强制重新计算布局
-                    document.body.style.width = '100vw';
-                    document.body.style.height = '100vh';
-                    
-                    // 触发resize事件
-                    window.dispatchEvent(new Event('resize'));
-                    
-                    // 强制重绘
-                    document.body.offsetHeight;
-                };
-                
-                // 立即执行一次
-                window.forceViewportUpdate();
-                
-                console.log('Simplified adaptive viewport setup completed');
-            }
-        """)
-        
-        logger.info("-> ✅ 自适应显示设置完成")
-        
-    except Exception as e:
-        logger.warning(f"-> ⚠️ 设置自适应显示失败: {e}")
-        # 不抛出异常，让初始化过程继续
-
-
-async def _start_viewport_monitor(page: AsyncPage):
-    """启动实时的viewport监听器"""
-    try:
-        logger.info("-> 启动实时viewport监听器...")
-        
-        # 注入实时viewport监听代码
-        await page.evaluate("""
-            () => {
-                console.log('Starting real-time viewport monitor...');
-                
-                // 创建全局的viewport更新函数
-                window.updateViewport = function() {
-                    const currentWidth = window.innerWidth;
-                    const currentHeight = window.innerHeight;
-                    console.log(`Updating viewport: ${currentWidth}x${currentHeight}`);
-                    
-                    // 强制设置body尺寸
-                    document.body.style.width = currentWidth + 'px';
-                    document.body.style.height = currentHeight + 'px';
-                    
-                    // 强制更新AI Studio容器
-                    const shells = document.querySelectorAll('ms-chat-shell');
-                    shells.forEach(shell => {
-                        shell.style.width = '100%';
-                        shell.style.height = '100%';
-                    });
-                    
-                    // 强制更新mat-drawer-container
-                    const containers = document.querySelectorAll('.mat-drawer-container');
-                    containers.forEach(container => {
-                        container.style.width = '100%';
-                        container.style.height = '100%';
-                    });
-                    
-                    // 触发resize事件
-                    window.dispatchEvent(new Event('resize'));
-                };
-                
-                // 立即执行一次
-                window.updateViewport();
-                
-                // 监听窗口大小变化
-                let resizeTimeout;
-                window.addEventListener('resize', () => {
-                    clearTimeout(resizeTimeout);
-                    resizeTimeout = setTimeout(() => {
-                        window.updateViewport();
-                    }, 100);
-                });
-                
-                // 创建定时器，每隔1秒检查一次
-                setInterval(() => {
-                    const currentWidth = window.innerWidth;
-                    const currentHeight = window.innerHeight;
-                    const bodyWidth = document.body.offsetWidth;
-                    const bodyHeight = document.body.offsetHeight;
-                    
-                    // 如果尺寸不匹配，强制更新
-                    if (Math.abs(currentWidth - bodyWidth) > 5 || Math.abs(currentHeight - bodyHeight) > 5) {
-                        console.log(`Viewport mismatch detected: window ${currentWidth}x${currentHeight}, body ${bodyWidth}x${bodyHeight}`);
-                        window.updateViewport();
-                    }
-                }, 1000);
-                
-                console.log('Real-time viewport monitor started');
-            }
-        """)
-        
-        logger.info("-> ✅ 实时viewport监听器已启动")
-        
-    except Exception as e:
-        logger.warning(f"-> ⚠️ 启动实时viewport监听器失败: {e}")
-
-
-async def force_viewport_update(page: AsyncPage):
-    """手动强制更新viewport（用于测试）"""
-    try:
-        logger.info("-> 手动强制更新viewport...")
-        
-        # 调用页面上的updateViewport函数
-        await page.evaluate("() => { if (window.updateViewport) window.updateViewport(); }")
-        
-        logger.info("-> ✅ 手动viewport更新完成")
-        
-    except Exception as e:
-        logger.warning(f"-> ⚠️ 手动viewport更新失败: {e}")
 
 
 async def _initialize_page_logic(browser: AsyncBrowser):
@@ -461,8 +298,14 @@ async def _initialize_page_logic(browser: AsyncBrowser):
     
     try:
         logger.info("创建新的浏览器上下文...")
-        # 设置合理的默认viewport尺寸
-        context_options: Dict[str, Any] = {'viewport': {'width': 1280, 'height': 800}}
+        # Camoufox不支持动态viewport调整，使用NULL让其自动管理
+        context_options: Dict[str, Any] = {
+            'viewport': None,  # 让Camoufox自动管理viewport，避免冲突
+            'device_scale_factor': 1.0,
+            'has_touch': False,
+            'is_mobile': False,
+            'java_script_enabled': True,
+        }
         if storage_state_path_to_use:
             context_options['storage_state'] = storage_state_path_to_use
             logger.info(f"   (使用 storage_state='{os.path.basename(storage_state_path_to_use)}')")
@@ -594,12 +437,7 @@ async def _initialize_page_logic(browser: AsyncBrowser):
             result_page_ready = True
 
             # 脚本注入已在上下文创建时完成，无需在此处重复注入
-
-            # 设置自适应viewport
-            await _setup_adaptive_viewport(found_page)
-            
-            # 启动viewport监听器
-            await _start_viewport_monitor(found_page)
+            # Camoufox自动管理viewport，无需手动设置
 
             logger.info(f"✅ 页面逻辑初始化成功。")
             return result_page_instance, result_page_ready
