@@ -38,6 +38,8 @@ This project is generously sponsored by ZMTO. Visit their website: [https://zmto
 ## 主要特性
 
 *   **OpenAI 兼容 API**: 支持 `/v1/chat/completions` 端点，完全兼容 OpenAI 客户端和第三方工具
+*   **多实例登录支持**: 支持多个 AI Studio 账户同时登录，实现负载均衡和高可用性 🆕
+*   **智能负载均衡**: 自动分配请求到最空闲实例，支持并发处理和故障转移 🆕
 *   **三层流式响应机制**: 集成流式代理 → 外部Helper服务 → Playwright页面交互的多重保障
 *   **智能模型切换**: 通过 API 请求中的 `model` 字段动态切换 AI Studio 中的模型
 *   **完整参数控制**: 支持 `temperature`、`max_output_tokens`、`top_p`、`stop`、`reasoning_effort` 等所有主要参数
@@ -123,6 +125,79 @@ graph TD
     FastAPI_App -- "API 响应 (Response)" --> API_Client
     FastAPI_App -- "UI 响应 (Response)" --> WebUI
 ```
+
+## 🚀 多实例登录支持 (v4.0 新特性)
+
+本项目现已支持**多个 AI Studio 账户同时登录**，实现真正的负载均衡和高可用性！
+
+### ✨ 核心特性
+
+- **🔄 智能负载均衡**: 自动分配请求到最空闲的实例，提升并发处理能力
+- **📈 水平扩展**: 支持多个认证文件，每个文件对应一个独立的浏览器实例
+- **🛡️ 故障转移**: 单个实例故障时自动切换到其他可用实例
+- **🔒 实例隔离**: 每个实例拥有独立的锁机制，避免全局阻塞
+- **📊 实时监控**: 提供 `/api/locks` 和 `/api/load-balancing` 监控端点
+
+### 🚀 快速开始
+
+#### 1. 准备多个认证文件
+```bash
+# 将不同账户的认证文件放入 multi_instance/ 目录
+multi_instance/
+├── account1_auth_session.json
+├── account2_auth_session.json
+└── account3_auth_session.json
+```
+
+#### 2. 启动多实例模式
+```bash
+# 使用 --multi 参数启动多实例
+python launch_camoufox.py --multi
+
+# 或使用 GUI 启动器，勾选多实例选项
+python gui_launcher.py
+```
+
+#### 3. 使用负载均衡
+```bash
+# 自动负载均衡 (推荐)
+curl -X POST http://127.0.0.1:2048/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemini-2.0-flash-exp", "messages": [{"role": "user", "content": "Hello"}]}'
+
+# 指定实例 (可选)
+curl -X POST http://127.0.0.1:2048/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemini-2.0-flash-exp", "instance_id": 2, "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+### 📊 监控和统计
+
+```bash
+# 查看锁状态
+curl http://127.0.0.1:2048/api/locks
+
+# 查看负载均衡统计
+curl http://127.0.0.1:2048/api/load-balancing
+```
+
+### 🔧 高级配置
+
+- **固定端口分配**: 实例按序使用端口 9222, 9223, 9224...
+- **顺序启动**: 避免端口冲突，每个实例间隔 2 秒启动
+- **自动清理**: 启动前自动清理占用的端口进程
+- **向下兼容**: 单实例模式完全兼容，无需修改现有配置
+
+### 📈 性能提升
+
+| 指标 | 单实例 | 多实例 (3个账户) |
+|------|--------|------------------|
+| 并发处理 | 1 个请求/时间 | 3 个请求/时间 |
+| 故障恢复 | 服务中断 | 自动故障转移 |
+| 负载分布 | 全局锁 | 实例级锁 |
+| 可扩展性 | 有限 | 水平扩展 |
+
+详细使用指南请参见：[多实例部署指南](MULTI_INSTANCE_GUIDE.md)
 
 ## 配置管理 ⭐
 
