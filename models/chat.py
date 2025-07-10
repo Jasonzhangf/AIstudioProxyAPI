@@ -39,3 +39,5 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = None 
     reasoning_effort: Optional[str] = None
     tools: Optional[List[Dict[str, Any]]] = None
+    # 多实例支持：指定使用哪个浏览器实例（1为主实例，2、3...为备用实例）
+    instance_id: Optional[int] = 1

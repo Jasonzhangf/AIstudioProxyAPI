@@ -99,6 +99,11 @@ is_browser_connected = False
 is_page_ready = False
 is_initializing = False
 
+# --- 多实例相关全局变量 ---
+multi_instance_browsers: List[AsyncBrowser] = []  # 存储所有浏览器实例
+multi_instance_pages: List[AsyncPage] = []  # 存储所有页面实例
+is_multi_instance_mode = False  # 是否为多实例模式
+
 # --- 全局代理配置 ---
 PLAYWRIGHT_PROXY_SETTINGS: Optional[Dict[str, str]] = None
 

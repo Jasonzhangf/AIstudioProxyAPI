@@ -147,6 +147,59 @@ async def _initialize_browser_and_page():
     
     if not server.model_list_fetch_event.is_set():
         server.model_list_fetch_event.set()
+    
+    # 检查是否需要初始化多实例
+    await _initialize_multi_instance_if_needed()
+
+async def _initialize_multi_instance_if_needed():
+    """检查并初始化多实例模式"""
+    import server
+    
+    # 检查是否有多实例端点信息
+    try:
+        import launch_camoufox
+        endpoints = getattr(launch_camoufox, 'multi_instance_endpoints', [])
+        if not endpoints:
+            server.logger.info("单实例模式，跳过多实例初始化")
+            return
+        
+        server.logger.info(f"🔧 检测到多实例模式，开始初始化 {len(endpoints)} 个浏览器实例...")
+        server.is_multi_instance_mode = True
+        
+        for i, endpoint_info in enumerate(endpoints):
+            endpoint = endpoint_info['endpoint']
+            auth_file = endpoint_info['auth_file']
+            instance_id = endpoint_info['instance_id']
+            is_primary = endpoint_info['is_primary']
+            
+            try:
+                server.logger.info(f"  📡 初始化浏览器实例 {instance_id} ({auth_file})...")
+                
+                # 连接到浏览器实例
+                browser = await server.playwright_manager.firefox.connect(endpoint, timeout=30000)
+                server.multi_instance_browsers.append(browser)
+                
+                # 初始化页面
+                page, is_page_ready = await _initialize_page_logic(browser)
+                if is_page_ready:
+                    server.multi_instance_pages.append(page)
+                    # 对所有实例执行初始化操作
+                    await _handle_initial_model_state_and_storage(page)
+                    
+                    if is_primary:
+                        server.logger.info(f"  ✅ 主实例 {instance_id} 初始化完成")
+                    else:
+                        server.logger.info(f"  ✅ 备用实例 {instance_id} 初始化完成")
+                else:
+                    server.logger.error(f"  ❌ 实例 {instance_id} 页面初始化失败")
+                    
+            except Exception as e:
+                server.logger.error(f"  ❌ 初始化实例 {instance_id} 失败: {e}")
+        
+        server.logger.info(f"🎉 多实例初始化完成! 主实例: {server.browser_instance}, 备用实例: {len(server.multi_instance_browsers)} 个")
+        
+    except Exception as e:
+        server.logger.error(f"多实例初始化过程出错: {e}")
 
 async def _shutdown_resources():
     import server
@@ -164,6 +217,25 @@ async def _shutdown_resources():
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         logger.info("Worker task stopped.")
+
+    # 清理多实例资源
+    if server.multi_instance_pages:
+        logger.info("关闭多实例页面...")
+        for page in server.multi_instance_pages:
+            try:
+                await page.close()
+            except Exception as e:
+                logger.warning(f"关闭多实例页面时出错: {e}")
+        server.multi_instance_pages.clear()
+    
+    if server.multi_instance_browsers:
+        logger.info("关闭多实例浏览器...")
+        for browser in server.multi_instance_browsers:
+            try:
+                await browser.close()
+            except Exception as e:
+                logger.warning(f"关闭多实例浏览器时出错: {e}")
+        server.multi_instance_browsers.clear()
 
     if server.page_instance:
         await _close_page_logic()

@@ -62,6 +62,7 @@ LAUNCHER_LOG_FILE_PATH = os.path.join(LOG_DIR, 'launch_app.log')
 # --- 全局进程句柄 ---
 camoufox_proc = None
 multi_browser_instances = []  # 存储多个浏览器实例的句柄
+multi_instance_endpoints = []  # 存储所有浏览器实例的WebSocket端点
 
 # --- 日志记录器实例 ---
 logger = logging.getLogger("CamoufoxLauncher")
@@ -585,7 +586,16 @@ def determine_proxy_configuration(internal_camoufox_proxy_arg=None):
 
 # --- 多实例浏览器启动函数 ---
 def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camoufox):
-    """启动多个浏览器实例，但只使用第一个进行操作"""
+    """
+    启动多个浏览器实例（顺序启动，固定端口）
+    
+    特性：
+    - 固定端口分配：基于 camoufox_debug_port 递增分配
+    - 顺序启动：一个接一个启动，避免资源冲突
+    - 端口监控清理：启动前确保每个端口可用
+    - 容错机制：非主实例失败时跳过继续启动
+    - 只使用第一个实例进行操作，其他作为备用
+    """
     global multi_browser_instances
     
     logger.info("🔄 开始启动多实例浏览器...")
@@ -641,7 +651,13 @@ def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camo
         auth_file_path = os.path.join(ACTIVE_AUTH_DIR, auth_file)
         instance_port = base_port + i
         
-        logger.info(f"🚀 正在启动浏览器实例 {i+1}/{len(auth_files)}: {auth_file} (端口: {instance_port})")
+        logger.info(f"🚀 正在启动浏览器实例 {i+1}/{len(auth_files)}: {auth_file} (固定端口: {instance_port})")
+        
+        # 再次确保当前实例的端口可用
+        logger.info(f"  🔧 确保端口 {instance_port} 可用...")
+        if not auto_clear_port(instance_port):
+            logger.error(f"  ❌ 端口 {instance_port} 无法清理，跳过实例 {i+1}")
+            continue
         
         # 构建启动命令
         browser_cmd = [
@@ -674,28 +690,65 @@ def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camo
             browser_proc = subprocess.Popen(browser_cmd, **browser_popen_kwargs)
             logger.info(f"  ✅ 浏览器实例 {i+1} 已启动 (PID: {browser_proc.pid})")
             
-            # 只对第一个实例等待并捕获WebSocket端点
-            if i == 0:
-                logger.info(f"  📡 等待第一个浏览器实例的WebSocket端点...")
-                ws_endpoint = capture_websocket_endpoint(browser_proc, f"浏览器实例{i+1}")
-                if ws_endpoint:
+            # 等待当前实例的WebSocket端点（增加超时时间）
+            logger.info(f"  📡 等待浏览器实例 {i+1} 的WebSocket端点...")
+            ws_endpoint = capture_websocket_endpoint(browser_proc, f"浏览器实例{i+1}")
+            
+            if ws_endpoint:
+                if i == 0:
                     first_ws_endpoint = ws_endpoint
                     logger.info(f"  ✅ 主要WebSocket端点已捕获: {first_ws_endpoint[:40]}...")
                 else:
-                    logger.error(f"  ❌ 未能从第一个浏览器实例捕获WebSocket端点")
+                    logger.info(f"  ✅ 备用WebSocket端点已捕获: {ws_endpoint[:40]}...")
+                
+                # 保存所有端点用于后续初始化
+                multi_instance_endpoints.append({
+                    'endpoint': ws_endpoint,
+                    'auth_file': auth_file,
+                    'instance_id': i + 1,
+                    'is_primary': i == 0
+                })
+                
+                # 保存浏览器实例句柄
+                multi_browser_instances.append(browser_proc)
+                
+                logger.info(f"  🎉 浏览器实例 {i+1} 启动完成，等待2秒后启动下一个...")
+                time.sleep(2)  # 等待2秒再启动下一个实例
+                
+            else:
+                logger.error(f"  ❌ 未能从浏览器实例 {i+1} 捕获WebSocket端点")
+                # 终止该实例进程
+                try:
+                    browser_proc.terminate()
+                    browser_proc.wait(timeout=5)
+                except Exception as cleanup_err:
+                    logger.warning(f"  ⚠️ 清理失败实例时出错: {cleanup_err}")
+                
+                # 如果是第一个实例失败，则整体失败
+                if i == 0:
+                    logger.error("  ❌ 主要实例启动失败，终止多实例启动")
                     cleanup()
                     sys.exit(1)
-            
-            # 保存所有浏览器实例句柄
-            multi_browser_instances.append(browser_proc)
+                else:
+                    logger.warning(f"  ⚠️ 跳过实例 {i+1}，继续启动其他实例...")
             
         except Exception as e:
             logger.error(f"❌ 启动浏览器实例 {i+1} 失败: {e}")
-            cleanup()
-            sys.exit(1)
+            # 如果是第一个实例失败，则整体失败
+            if i == 0:
+                cleanup()
+                sys.exit(1)
+            else:
+                logger.warning(f"  ⚠️ 跳过实例 {i+1}，继续启动其他实例...")
+    
+    if not multi_browser_instances:
+        logger.error("❌ 没有成功启动任何浏览器实例")
+        cleanup()
+        sys.exit(1)
     
     logger.info(f"🎉 多实例浏览器启动完成! 总共启动了 {len(multi_browser_instances)} 个实例")
     logger.info(f"🎯 使用第一个浏览器实例进行所有操作，流程与单实例完全一致")
+    logger.info(f"📋 保存了 {len(multi_instance_endpoints)} 个WebSocket端点，将在服务器启动后进行初始化")
     
     # 设置环境变量
     if first_ws_endpoint:

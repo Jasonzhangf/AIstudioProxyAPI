@@ -39,20 +39,46 @@ from .utils import (
 from browser_utils.page_controller import PageController
 
 
+async def _get_instance_page(instance_id: int):
+    """获取指定实例的页面对象"""
+    import server
+    
+    # 默认使用主实例
+    if instance_id == 1 or not server.is_multi_instance_mode:
+        return server.page_instance
+    
+    # 使用多实例中的指定实例
+    if server.multi_instance_pages and instance_id <= len(server.multi_instance_pages):
+        return server.multi_instance_pages[instance_id - 1]
+    
+    # 如果指定实例不存在，回退到主实例
+    return server.page_instance
+
+
 async def _initialize_request_context(req_id: str, request: ChatCompletionRequest) -> dict:
     """初始化请求上下文"""
     from server import (
         logger, page_instance, is_page_ready, parsed_model_list,
         current_ai_studio_model_id, model_switching_lock, page_params_cache,
-        params_cache_lock
+        params_cache_lock, is_multi_instance_mode
     )
     
+    # 获取实例ID（默认为1）
+    instance_id = getattr(request, 'instance_id', 1) or 1
+    
     logger.info(f"[{req_id}] 开始处理请求...")
-    logger.info(f"[{req_id}]   请求参数 - Model: {request.model}, Stream: {request.stream}")
+    logger.info(f"[{req_id}]   请求参数 - Model: {request.model}, Stream: {request.stream}, Instance: {instance_id}")
+    
+    # 获取指定实例的页面
+    target_page = await _get_instance_page(instance_id)
+    if not target_page:
+        logger.warning(f"[{req_id}] 实例 {instance_id} 不可用，回退到主实例")
+        target_page = page_instance
     
     context = {
         'logger': logger,
-        'page': page_instance,
+        'page': target_page,
+        'instance_id': instance_id,
         'is_page_ready': is_page_ready,
         'parsed_model_list': parsed_model_list,
         'current_ai_studio_model_id': current_ai_studio_model_id,
@@ -63,7 +89,8 @@ async def _initialize_request_context(req_id: str, request: ChatCompletionReques
         'model_actually_switched': False,
         'requested_model': request.model,
         'model_id_to_use': None,
-        'needs_model_switching': False
+        'needs_model_switching': False,
+        'is_multi_instance_mode': is_multi_instance_mode
     }
     
     return context
