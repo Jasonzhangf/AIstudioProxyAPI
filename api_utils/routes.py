@@ -465,3 +465,58 @@ async def delete_api_key(request: ApiKeyRequest, logger: logging.Logger = Depend
     except Exception as e:
         logger.error(f"删除API密钥失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- 多实例锁状态查看 ---
+async def get_lock_status(logger: logging.Logger = Depends(get_logger)):
+    """获取多实例锁状态信息"""
+    try:
+        from api_utils.utils import get_instance_lock_info
+        import server
+        
+        lock_info = get_instance_lock_info()
+        
+        status = {
+            "multi_instance_mode": getattr(server, 'is_multi_instance_mode', False),
+            "total_instances": len(getattr(server, 'multi_instance_pages', [])),
+            "instance_locks": lock_info,
+            "global_locks_active": {
+                "processing_lock": server.processing_lock is not None,
+                "model_switching_lock": server.model_switching_lock is not None,
+                "params_cache_lock": server.params_cache_lock is not None
+            }
+        }
+        
+        return JSONResponse(content=status)
+    except Exception as e:
+        logger.error(f"获取锁状态失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def get_load_balancing_status(logger: logging.Logger = Depends(get_logger)):
+    """获取负载均衡状态信息"""
+    try:
+        from api_utils.utils import get_load_balancing_stats, get_available_instances
+        
+        stats = get_load_balancing_stats()
+        available_instances = get_available_instances()
+        
+        status = {
+            "load_balancing_enabled": len(available_instances) > 1,
+            "available_instances": available_instances,
+            "load_balancing_stats": stats,
+            "strategy": {
+                "new_requests": "自动选择最空闲实例",
+                "existing_requests": "继续使用原实例（基于req_id）",
+                "scoring": {
+                    "processing_lock_acquired": 100,
+                    "model_switching_lock_acquired": 10,
+                    "params_cache_lock_acquired": 1
+                }
+            }
+        }
+        
+        return JSONResponse(content=status)
+    except Exception as e:
+        logger.error(f"获取负载均衡状态失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -63,8 +63,19 @@ async def _initialize_request_context(req_id: str, request: ChatCompletionReques
         params_cache_lock, is_multi_instance_mode
     )
     
-    # 获取实例ID（默认为1）
-    instance_id = getattr(request, 'instance_id', 1) or 1
+    # 获取实例ID - 支持自动负载均衡
+    original_instance_id = getattr(request, 'instance_id', None)
+    
+    if original_instance_id:
+        # 用户指定了实例ID
+        instance_id = original_instance_id
+        logger.info(f"[{req_id}] 用户指定实例: {instance_id}")
+    else:
+        # 自动选择最佳实例
+        from .utils import select_best_instance, register_request_instance
+        instance_id = select_best_instance(req_id)
+        register_request_instance(req_id, instance_id)
+        logger.info(f"[{req_id}] 自动负载均衡选择实例: {instance_id}")
     
     logger.info(f"[{req_id}] 开始处理请求...")
     logger.info(f"[{req_id}]   请求参数 - Model: {request.model}, Stream: {request.stream}, Instance: {instance_id}")
@@ -75,6 +86,11 @@ async def _initialize_request_context(req_id: str, request: ChatCompletionReques
         logger.warning(f"[{req_id}] 实例 {instance_id} 不可用，回退到主实例")
         target_page = page_instance
     
+    # 获取基于实例的锁
+    from .utils import get_instance_lock
+    instance_model_switching_lock = await get_instance_lock(instance_id, "model_switching")
+    instance_params_cache_lock = await get_instance_lock(instance_id, "params_cache")
+    
     context = {
         'logger': logger,
         'page': target_page,
@@ -82,9 +98,9 @@ async def _initialize_request_context(req_id: str, request: ChatCompletionReques
         'is_page_ready': is_page_ready,
         'parsed_model_list': parsed_model_list,
         'current_ai_studio_model_id': current_ai_studio_model_id,
-        'model_switching_lock': model_switching_lock,
+        'model_switching_lock': instance_model_switching_lock,  # 使用实例专用锁
         'page_params_cache': page_params_cache,
-        'params_cache_lock': params_cache_lock,
+        'params_cache_lock': instance_params_cache_lock,  # 使用实例专用锁
         'is_streaming': request.stream,
         'model_actually_switched': False,
         'requested_model': request.model,

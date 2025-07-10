@@ -360,7 +360,8 @@ def create_app() -> FastAPI:
         read_index, get_css, get_js, get_api_info,
         health_check, list_models, chat_completions,
         cancel_request, get_queue_status, websocket_log_endpoint,
-        get_api_keys, add_api_key, test_api_key, delete_api_key
+        get_api_keys, add_api_key, test_api_key, delete_api_key,
+        get_lock_status, get_load_balancing_status
     )
     from fastapi.responses import FileResponse
     
@@ -380,5 +381,11 @@ def create_app() -> FastAPI:
     app.post("/api/keys")(add_api_key)
     app.post("/api/keys/test")(test_api_key)
     app.delete("/api/keys")(delete_api_key)
+    
+    # 多实例锁状态端点
+    app.get("/api/locks")(get_lock_status)
+    
+    # 负载均衡状态端点
+    app.get("/api/load-balancing")(get_load_balancing_status)
 
     return app

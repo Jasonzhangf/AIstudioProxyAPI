@@ -425,4 +425,167 @@ def calculate_usage_stats(messages: List[dict], response_content: str, reasoning
 
 def generate_sse_stop_chunk_with_usage(req_id: str, model: str, usage_stats: dict, reason: str = "stop") -> str:
     """生成带usage统计的SSE停止块"""
-    return generate_sse_stop_chunk(req_id, model, reason, usage_stats) 
+    return generate_sse_stop_chunk(req_id, model, reason, usage_stats)
+
+
+# --- 基于实例的锁管理 ---
+async def get_instance_lock(instance_id: int, lock_type: str):
+    """获取指定实例的锁对象，如果不存在则创建"""
+    import server
+    
+    if lock_type == "processing":
+        if instance_id not in server.instance_processing_locks:
+            server.instance_processing_locks[instance_id] = asyncio.Lock()
+        return server.instance_processing_locks[instance_id]
+    
+    elif lock_type == "model_switching":
+        if instance_id not in server.instance_model_switching_locks:
+            server.instance_model_switching_locks[instance_id] = asyncio.Lock()
+        return server.instance_model_switching_locks[instance_id]
+    
+    elif lock_type == "params_cache":
+        if instance_id not in server.instance_params_cache_locks:
+            server.instance_params_cache_locks[instance_id] = asyncio.Lock()
+        return server.instance_params_cache_locks[instance_id]
+    
+    else:
+        raise ValueError(f"未知的锁类型: {lock_type}")
+
+
+def get_instance_lock_info() -> dict:
+    """获取当前所有实例锁的信息"""
+    import server
+    
+    info = {
+        "processing_locks": list(server.instance_processing_locks.keys()),
+        "model_switching_locks": list(server.instance_model_switching_locks.keys()),
+        "params_cache_locks": list(server.instance_params_cache_locks.keys())
+    }
+    
+    return info
+
+
+# --- 自动化负载均衡 ---
+request_instance_mapping = {}  # req_id -> instance_id 的映射
+
+
+def get_available_instances() -> list:
+    """获取所有可用实例ID列表"""
+    import server
+    
+    if not getattr(server, 'is_multi_instance_mode', False):
+        return [1]  # 单实例模式只返回实例1
+    
+    # 多实例模式返回所有可用实例
+    total_instances = len(getattr(server, 'multi_instance_pages', []))
+    if total_instances == 0:
+        return [1]  # 如果没有多实例页面，回退到主实例
+    
+    return list(range(1, total_instances + 1))
+
+
+def check_instance_lock_status(instance_id: int) -> dict:
+    """检查指定实例的锁状态"""
+    import server
+    
+    status = {
+        "instance_id": instance_id,
+        "processing_lock_acquired": False,
+        "model_switching_lock_acquired": False,
+        "params_cache_lock_acquired": False
+    }
+    
+    # 检查处理锁
+    if instance_id in server.instance_processing_locks:
+        lock = server.instance_processing_locks[instance_id]
+        status["processing_lock_acquired"] = lock.locked()
+    
+    # 检查模型切换锁
+    if instance_id in server.instance_model_switching_locks:
+        lock = server.instance_model_switching_locks[instance_id]
+        status["model_switching_lock_acquired"] = lock.locked()
+    
+    # 检查参数缓存锁
+    if instance_id in server.instance_params_cache_locks:
+        lock = server.instance_params_cache_locks[instance_id]
+        status["params_cache_lock_acquired"] = lock.locked()
+    
+    return status
+
+
+def select_best_instance(req_id: str = None) -> int:
+    """
+    自动选择最佳实例进行负载均衡
+    
+    策略：
+    1. 如果是已知的req_id（续期请求），返回原实例
+    2. 如果是新请求，选择锁最空闲的实例
+    """
+    
+    # 检查是否是已知请求的续期
+    if req_id and req_id in request_instance_mapping:
+        original_instance = request_instance_mapping[req_id]
+        return original_instance
+    
+    # 新请求：选择最空闲的实例
+    available_instances = get_available_instances()
+    
+    if len(available_instances) == 1:
+        # 单实例模式
+        return available_instances[0]
+    
+    # 多实例模式：评估每个实例的负载
+    best_instance = available_instances[0]
+    best_score = float('inf')
+    
+    for instance_id in available_instances:
+        lock_status = check_instance_lock_status(instance_id)
+        
+        # 计算负载分数（越低越好）
+        score = 0
+        if lock_status["processing_lock_acquired"]:
+            score += 100  # 处理锁被占用是最重要的指标
+        if lock_status["model_switching_lock_acquired"]:
+            score += 10   # 模型切换锁被占用
+        if lock_status["params_cache_lock_acquired"]:
+            score += 1    # 参数缓存锁被占用
+        
+        if score < best_score:
+            best_score = score
+            best_instance = instance_id
+    
+    return best_instance
+
+
+def register_request_instance(req_id: str, instance_id: int):
+    """注册请求ID与实例ID的映射关系"""
+    request_instance_mapping[req_id] = instance_id
+
+
+def cleanup_request_mapping(req_id: str):
+    """清理完成的请求映射"""
+    if req_id in request_instance_mapping:
+        del request_instance_mapping[req_id]
+
+
+def get_load_balancing_stats() -> dict:
+    """获取负载均衡统计信息"""
+    import server
+    
+    available_instances = get_available_instances()
+    stats = {
+        "total_instances": len(available_instances),
+        "active_requests": len(request_instance_mapping),
+        "instance_status": {}
+    }
+    
+    for instance_id in available_instances:
+        lock_status = check_instance_lock_status(instance_id)
+        active_requests = len([req_id for req_id, inst_id in request_instance_mapping.items() if inst_id == instance_id])
+        
+        stats["instance_status"][instance_id] = {
+            "active_requests": active_requests,
+            "locks": lock_status
+        }
+    
+    return stats 

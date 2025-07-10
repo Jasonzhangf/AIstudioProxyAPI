@@ -120,6 +120,11 @@ request_queue: Optional[Queue] = None
 processing_lock: Optional[Lock] = None
 worker_task: Optional[Task] = None
 
+# --- 基于实例的锁机制 ---
+instance_processing_locks: Dict[int, Lock] = {}  # 每个实例独立的处理锁
+instance_model_switching_locks: Dict[int, Lock] = {}  # 每个实例独立的模型切换锁
+instance_params_cache_locks: Dict[int, Lock] = {}  # 每个实例独立的参数缓存锁
+
 page_params_cache: Dict[str, Any] = {}
 params_cache_lock: Optional[Lock] = None
 

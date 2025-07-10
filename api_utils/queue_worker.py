@@ -137,9 +137,16 @@ async def queue_worker():
                 request_queue.task_done()
                 continue
             
-            logger.info(f"[{req_id}] (Worker) 等待处理锁...")
-            async with processing_lock:
-                logger.info(f"[{req_id}] (Worker) 已获取处理锁。开始核心处理...")
+            # 获取实例ID，确定使用哪个锁
+            instance_id = getattr(request_data, 'instance_id', 1) or 1
+            
+            # 获取该实例的处理锁
+            from api_utils.utils import get_instance_lock
+            instance_processing_lock = await get_instance_lock(instance_id, "processing")
+            
+            logger.info(f"[{req_id}] (Worker) 等待实例 {instance_id} 的处理锁...")
+            async with instance_processing_lock:
+                logger.info(f"[{req_id}] (Worker) 已获取实例 {instance_id} 的处理锁。开始核心处理...")
                 
                 # 获取锁后最终主动检测客户端连接
                 is_connected = await _test_client_connection(req_id, http_request)
@@ -346,6 +353,13 @@ async def queue_worker():
                 result_future.set_exception(HTTPException(status_code=500, detail=f"[{req_id}] 服务器内部错误: {e}"))
         finally:
             if request_item:
+                # 清理请求映射关系
+                try:
+                    from api_utils.utils import cleanup_request_mapping
+                    cleanup_request_mapping(req_id)
+                except Exception as cleanup_err:
+                    logger.warning(f"[{req_id}] 清理请求映射时出错: {cleanup_err}")
+                
                 request_queue.task_done()
     
     logger.info("--- 队列 Worker 已停止 ---") 
