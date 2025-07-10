@@ -61,6 +61,7 @@ LAUNCHER_LOG_FILE_PATH = os.path.join(LOG_DIR, 'launch_app.log')
 
 # --- 全局进程句柄 ---
 camoufox_proc = None
+multi_browser_instances = []  # 存储多个浏览器实例的句柄
 
 # --- 日志记录器实例 ---
 logger = logging.getLogger("CamoufoxLauncher")
@@ -133,10 +134,68 @@ def ensure_auth_dirs_exist():
         logger.error(f"  ❌ 创建认证目录失败: {e}", exc_info=True)
         sys.exit(1)
 
+# --- 终止浏览器进程的辅助函数 ---
+def _terminate_browser_process(browser_proc):
+    """终止单个浏览器进程"""
+    if not browser_proc:
+        return
+    
+    pid = browser_proc.pid
+    try:
+        if sys.platform != "win32" and hasattr(os, 'getpgid') and hasattr(os, 'killpg'):
+            try:
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                browser_proc.terminate()
+        else:
+            if sys.platform == "win32":
+                subprocess.call(['taskkill', '/T', '/PID', str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                browser_proc.terminate()
+        
+        browser_proc.wait(timeout=3)
+        logger.info(f"浏览器进程 (PID: {pid}) 已成功终止")
+    except subprocess.TimeoutExpired:
+        logger.warning(f"浏览器进程 (PID: {pid}) 超时，强制终止...")
+        try:
+            if sys.platform != "win32" and hasattr(os, 'getpgid') and hasattr(os, 'killpg'):
+                try:
+                    pgid = os.getpgid(pid)
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    browser_proc.kill()
+            else:
+                if sys.platform == "win32":
+                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    browser_proc.kill()
+            browser_proc.wait(timeout=2)
+            logger.info(f"浏览器进程 (PID: {pid}) 已强制终止")
+        except Exception as e:
+            logger.error(f"强制终止浏览器进程 (PID: {pid}) 失败: {e}")
+    except Exception as e:
+        logger.error(f"终止浏览器进程 (PID: {pid}) 失败: {e}")
+    finally:
+        if hasattr(browser_proc, 'stdout') and browser_proc.stdout and not browser_proc.stdout.closed:
+            browser_proc.stdout.close()
+        if hasattr(browser_proc, 'stderr') and browser_proc.stderr and not browser_proc.stderr.closed:
+            browser_proc.stderr.close()
+
 # --- 清理函数 (在脚本退出时执行) (from dev - more detailed logging and checks) ---
 def cleanup():
-    global camoufox_proc
+    global camoufox_proc, multi_browser_instances
     logger.info("--- 开始执行清理程序 (launch_camoufox.py) ---")
+    
+    # 清理多实例浏览器进程
+    if multi_browser_instances:
+        logger.info(f"清理 {len(multi_browser_instances)} 个多实例浏览器进程...")
+        for i, browser_proc in enumerate(multi_browser_instances):
+            if browser_proc and browser_proc.poll() is None:
+                logger.info(f"正在终止多实例浏览器 {i+1} (PID: {browser_proc.pid})...")
+                _terminate_browser_process(browser_proc)
+        multi_browser_instances.clear()
+    
     if camoufox_proc and camoufox_proc.poll() is None:
         pid = camoufox_proc.pid
         logger.info(f"正在终止 Camoufox 内部子进程 (PID: {pid})...")
@@ -524,6 +583,203 @@ def determine_proxy_configuration(internal_camoufox_proxy_arg=None):
     return result
 
 
+# --- 多实例浏览器启动函数 ---
+def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camoufox):
+    """启动多个浏览器实例，但只使用第一个进行操作"""
+    global multi_browser_instances
+    
+    logger.info("🔄 开始启动多实例浏览器...")
+    
+    # 首先清理所有相关端口
+    logger.info("🧹 清理多实例启动前的端口占用...")
+    ports_to_clean = [
+        args.server_port,  # FastAPI主服务端口
+        args.stream_port,  # 流式代理端口
+    ]
+    
+    # 扫描活动认证目录
+    auth_files = []
+    if os.path.exists(ACTIVE_AUTH_DIR):
+        try:
+            auth_files = sorted([
+                f for f in os.listdir(ACTIVE_AUTH_DIR)
+                if f.lower().endswith('.json') and os.path.isfile(os.path.join(ACTIVE_AUTH_DIR, f))
+            ])
+        except Exception as e:
+            logger.error(f"❌ 扫描活动认证目录失败: {e}")
+            sys.exit(1)
+    
+    if not auth_files:
+        logger.error(f"❌ 多实例模式错误: 活动认证目录 '{ACTIVE_AUTH_DIR}' 中未找到任何 '.json' 认证文件")
+        sys.exit(1)
+    
+    logger.info(f"🔍 找到 {len(auth_files)} 个认证文件: {auth_files}")
+    
+    # 添加浏览器调试端口到清理列表
+    base_port = args.camoufox_debug_port
+    for i in range(len(auth_files)):
+        ports_to_clean.append(base_port + i)
+    
+    # 清理所有端口
+    failed_ports = []
+    for port in ports_to_clean:
+        if port > 0:  # 跳过禁用的端口（如stream_port=0）
+            logger.info(f"  🔧 清理端口 {port}...")
+            if not auto_clear_port(port):
+                failed_ports.append(port)
+    
+    if failed_ports:
+        logger.warning(f"⚠️ 部分端口清理失败: {failed_ports}，继续尝试启动...")
+    else:
+        logger.info("✅ 所有相关端口清理完成")
+    
+    # 启动多个浏览器实例
+    first_ws_endpoint = None
+    base_port = args.camoufox_debug_port
+    
+    for i, auth_file in enumerate(auth_files):
+        auth_file_path = os.path.join(ACTIVE_AUTH_DIR, auth_file)
+        instance_port = base_port + i
+        
+        logger.info(f"🚀 正在启动浏览器实例 {i+1}/{len(auth_files)}: {auth_file} (端口: {instance_port})")
+        
+        # 构建启动命令
+        browser_cmd = [
+            PYTHON_EXECUTABLE, '-u', __file__,
+            '--internal-launch-mode', final_launch_mode,
+            '--internal-auth-file', auth_file_path,
+            '--internal-camoufox-port', str(instance_port),
+            '--internal-camoufox-os', simulated_os_for_camoufox
+        ]
+        
+        # 传递代理参数
+        if args.internal_camoufox_proxy is not None:
+            browser_cmd.extend(['--internal-camoufox-proxy', args.internal_camoufox_proxy])
+        
+        # 准备启动参数
+        browser_popen_kwargs = {
+            'stdout': subprocess.PIPE,
+            'stderr': subprocess.PIPE,
+            'env': os.environ.copy()
+        }
+        browser_popen_kwargs['env']['PYTHONIOENCODING'] = 'utf-8'
+        
+        if sys.platform != "win32" and final_launch_mode != 'debug':
+            browser_popen_kwargs['start_new_session'] = True
+        elif sys.platform == "win32" and (final_launch_mode == 'headless' or final_launch_mode == 'virtual_headless'):
+            browser_popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+        
+        try:
+            # 启动浏览器进程
+            browser_proc = subprocess.Popen(browser_cmd, **browser_popen_kwargs)
+            logger.info(f"  ✅ 浏览器实例 {i+1} 已启动 (PID: {browser_proc.pid})")
+            
+            # 只对第一个实例等待并捕获WebSocket端点
+            if i == 0:
+                logger.info(f"  📡 等待第一个浏览器实例的WebSocket端点...")
+                ws_endpoint = capture_websocket_endpoint(browser_proc, f"浏览器实例{i+1}")
+                if ws_endpoint:
+                    first_ws_endpoint = ws_endpoint
+                    logger.info(f"  ✅ 主要WebSocket端点已捕获: {first_ws_endpoint[:40]}...")
+                else:
+                    logger.error(f"  ❌ 未能从第一个浏览器实例捕获WebSocket端点")
+                    cleanup()
+                    sys.exit(1)
+            
+            # 保存所有浏览器实例句柄
+            multi_browser_instances.append(browser_proc)
+            
+        except Exception as e:
+            logger.error(f"❌ 启动浏览器实例 {i+1} 失败: {e}")
+            cleanup()
+            sys.exit(1)
+    
+    logger.info(f"🎉 多实例浏览器启动完成! 总共启动了 {len(multi_browser_instances)} 个实例")
+    logger.info(f"🎯 使用第一个浏览器实例进行所有操作，流程与单实例完全一致")
+    
+    # 设置环境变量
+    if first_ws_endpoint:
+        os.environ['CAMOUFOX_WS_ENDPOINT'] = first_ws_endpoint
+    
+    os.environ['LAUNCH_MODE'] = final_launch_mode
+    os.environ['SERVER_LOG_LEVEL'] = args.server_log_level.upper()
+    os.environ['SERVER_REDIRECT_PRINT'] = str(args.server_redirect_print).lower()
+    os.environ['DEBUG_LOGS_ENABLED'] = str(args.debug_logs).lower()
+    os.environ['TRACE_LOGS_ENABLED'] = str(args.trace_logs).lower()
+    os.environ['ACTIVE_AUTH_JSON_PATH'] = os.path.join(ACTIVE_AUTH_DIR, auth_files[0])
+    os.environ['AUTO_SAVE_AUTH'] = str(args.auto_save_auth).lower()
+    os.environ['AUTH_SAVE_TIMEOUT'] = str(args.auth_save_timeout)
+    os.environ['SERVER_PORT_INFO'] = str(args.server_port)
+    os.environ['STREAM_PORT'] = str(args.stream_port)
+    
+    # 设置代理配置
+    proxy_config = determine_proxy_configuration(args.internal_camoufox_proxy)
+    if proxy_config['stream_proxy']:
+        os.environ['UNIFIED_PROXY_CONFIG'] = proxy_config['stream_proxy']
+        logger.info(f"  代理配置: {proxy_config['source']}")
+    
+    # 启动FastAPI服务器
+    logger.info(f"🚀 启动FastAPI服务器 (端口: {args.server_port})")
+    try:
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=args.server_port,
+            log_config=None
+        )
+    except Exception as e:
+        logger.error(f"❌ FastAPI服务器启动失败: {e}")
+        cleanup()
+        sys.exit(1)
+
+
+def capture_websocket_endpoint(browser_proc, instance_name):
+    """捕获浏览器进程的WebSocket端点"""
+    output_queue = queue.Queue()
+    stdout_reader = threading.Thread(
+        target=_enqueue_output,
+        args=(browser_proc.stdout, "stdout", output_queue, browser_proc.pid),
+        daemon=True
+    )
+    stderr_reader = threading.Thread(
+        target=_enqueue_output,
+        args=(browser_proc.stderr, "stderr", output_queue, browser_proc.pid),
+        daemon=True
+    )
+    
+    stdout_reader.start()
+    stderr_reader.start()
+    
+    start_time = time.time()
+    while time.time() - start_time < ENDPOINT_CAPTURE_TIMEOUT:
+        if browser_proc.poll() is not None:
+            logger.error(f"  {instance_name} 进程已意外退出，退出码: {browser_proc.poll()}")
+            return None
+        
+        try:
+            stream_name, line = output_queue.get(timeout=0.2)
+            if line is None:
+                continue
+            
+            # 记录输出
+            log_line = f"[{instance_name}-{stream_name}]: {line.rstrip()}"
+            if stream_name == "stderr" or "ERROR" in line.upper():
+                logger.warning(log_line)
+            else:
+                logger.info(log_line)
+            
+            # 查找WebSocket端点
+            ws_match = ws_regex.search(line)
+            if ws_match:
+                return ws_match.group(1)
+                
+        except queue.Empty:
+            continue
+    
+    logger.error(f"  {instance_name} 超时未捕获到WebSocket端点")
+    return None
+
+
 # --- 主执行逻辑 ---
 if __name__ == "__main__":
     # 检查是否是内部启动调用，如果是，则不配置 launcher 的日志
@@ -545,6 +801,7 @@ if __name__ == "__main__":
 
     # 用户可见参数 (merged from dev and helper)
     parser.add_argument("--server-port", type=int, default=DEFAULT_SERVER_PORT, help=f"FastAPI 服务器监听的端口号 (默认: {DEFAULT_SERVER_PORT})")
+    parser.add_argument("--multi", action='store_true', help="启用多实例模式：根据活动认证文件启动多个浏览器实例")
     parser.add_argument(
         "--stream-port",
         type=int,
@@ -802,6 +1059,17 @@ if __name__ == "__main__":
 
 
     logger.info("--- 步骤 3: 准备并启动 Camoufox 内部进程 ---")
+    
+    # 检查是否启用多实例模式
+    if args.multi:
+        logger.info("🔄 多实例模式已启用")
+        # --headless 标志适用于所有实例
+        if args.headless:
+            final_launch_mode = 'headless'
+        elif args.virtual_display:
+            final_launch_mode = 'virtual_headless'
+        start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camoufox)
+        sys.exit(0)
     
     # 自动清理Camoufox调试端口
     camoufox_port = args.camoufox_debug_port
