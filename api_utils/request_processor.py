@@ -797,6 +797,28 @@ async def _handle_playwright_response(req_id: str, request: ChatCompletionReques
                 # 使用PageController获取响应
                 page_controller = PageController(page, logger, req_id)
                 final_content = await page_controller.get_response(check_client_disconnected)
+                
+            except Exception as e:
+                # 检查是否是quota异常
+                from api_utils.exceptions import QuotaExceededException
+                if isinstance(e, QuotaExceededException):
+                    logger.warning(f"[{req_id}] 检测到quota异常，尝试降级处理: {e}")
+                    # 触发降级重试
+                    fallback_result = await _handle_quota_fallback(
+                        req_id, request, context, page, check_client_disconnected, e
+                    )
+                    if fallback_result:
+                        final_content = fallback_result
+                    else:
+                        raise HTTPException(
+                            status_code=429,
+                            detail=f"[{req_id}] Model quota exceeded and fallback failed"
+                        )
+                else:
+                    raise
+                    
+            # 继续处理final_content
+            if final_content:
 
                 # 标记数据接收状态
                 data_receiving = True
@@ -868,7 +890,26 @@ async def _handle_playwright_response(req_id: str, request: ChatCompletionReques
     else:
         # 使用PageController获取响应
         page_controller = PageController(page, logger, req_id)
-        final_content = await page_controller.get_response(check_client_disconnected)
+        try:
+            final_content = await page_controller.get_response(check_client_disconnected)
+        except Exception as e:
+            # 检查是否是quota异常
+            from api_utils.exceptions import QuotaExceededException
+            if isinstance(e, QuotaExceededException):
+                logger.warning(f"[{req_id}] 非流式请求检测到quota异常，尝试降级处理: {e}")
+                # 触发降级重试
+                fallback_result = await _handle_quota_fallback(
+                    req_id, request, context, page, check_client_disconnected, e
+                )
+                if fallback_result:
+                    final_content = fallback_result
+                else:
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"[{req_id}] Model quota exceeded and fallback failed"
+                    )
+            else:
+                raise
         
         # 计算token使用统计
         usage_stats = calculate_usage_stats(
@@ -894,6 +935,65 @@ async def _handle_playwright_response(req_id: str, request: ChatCompletionReques
         if not result_future.done():
             result_future.set_result(JSONResponse(content=response_payload))
         
+        return None
+
+
+async def _handle_quota_fallback(req_id: str, request: ChatCompletionRequest, context: dict, 
+                                 page: AsyncPage, check_client_disconnected: Callable, 
+                                 quota_exception: Exception) -> Optional[str]:
+    """处理quota错误的降级重试
+    
+    Args:
+        req_id: 请求ID
+        request: 原始请求
+        context: 请求上下文
+        page: 页面对象
+        check_client_disconnected: 断开连接检查函数
+        quota_exception: quota异常对象
+        
+    Returns:
+        成功降级后的响应内容，失败则返回None
+    """
+    from server import logger
+    from browser_utils.model_management import switch_ai_studio_model
+    from browser_utils.page_controller import PageController
+    
+    try:
+        fallback_model = getattr(quota_exception, 'fallback_model', None)
+        original_model = getattr(quota_exception, 'original_model', None)
+        
+        if not fallback_model:
+            logger.error(f"[{req_id}] quota异常中没有fallback_model信息")
+            return None
+            
+        logger.info(f"[{req_id}] 开始降级重试: {original_model} -> {fallback_model}")
+        
+        # 切换到降级模型
+        switch_success = await switch_ai_studio_model(page, fallback_model, req_id)
+        
+        if not switch_success:
+            logger.error(f"[{req_id}] 切换到降级模型失败: {fallback_model}")
+            return None
+            
+        logger.info(f"[{req_id}] 成功切换到降级模型: {fallback_model}")
+        
+        # 重新提交请求
+        page_controller = PageController(page, logger, req_id)
+        
+        # 重新提交prompt（假设原始prompt还在textarea中）
+        await page_controller.submit_prompt(
+            request.messages[-1].get('content', '') if request.messages else '',
+            check_client_disconnected
+        )
+        
+        # 获取降级模型的响应
+        fallback_content = await page_controller.get_response(check_client_disconnected)
+        
+        logger.info(f"[{req_id}] 降级模型响应成功: {len(fallback_content)} chars")
+        return fallback_content
+        
+    except Exception as e:
+        logger.error(f"[{req_id}] 降级重试过程中出错: {e}")
         return None
 
 

@@ -29,6 +29,8 @@ OVERLAY_SELECTOR = 'div.cdk-overlay-backdrop'
 
 # --- 错误提示选择器 ---
 ERROR_TOAST_SELECTOR = 'div.toast.warning, div.toast.error'
+MODEL_ERROR_SELECTOR = 'div.model-error'
+RATE_LIMIT_ERROR_SELECTOR = 'div.model-error mat-icon[role="img"]:has-text("error")'
 
 # --- 编辑相关选择器 ---
 EDIT_MESSAGE_BUTTON_SELECTOR = 'ms-chat-turn:last-child .actions-container button.toggle-edit-button'

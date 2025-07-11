@@ -4,6 +4,7 @@ from .initialization import _initialize_page_logic, _close_page_logic, signal_ca
 from .operations import (
     _handle_model_list_response,
     detect_and_extract_page_error,
+    detect_quota_error,
     save_error_snapshot,
     get_response_via_edit_button,
     get_response_via_copy_button,
@@ -32,6 +33,7 @@ __all__ = [
     # 页面操作相关
     '_handle_model_list_response',
     'detect_and_extract_page_error',
+    'detect_quota_error',
     'save_error_snapshot',
     'get_response_via_edit_button',
     'get_response_via_copy_button',

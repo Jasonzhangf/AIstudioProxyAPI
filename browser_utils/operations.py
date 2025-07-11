@@ -406,6 +406,21 @@ async def _handle_model_list_response(response: Any):
 
 async def detect_and_extract_page_error(page: AsyncPage, req_id: str) -> Optional[str]:
     """检测并提取页面错误"""
+    # 首先检查模型错误（rate limit等）
+    try:
+        from config.selectors import MODEL_ERROR_SELECTOR, ERROR_TOAST_SELECTOR
+        model_error_locator = page.locator(MODEL_ERROR_SELECTOR).last
+        await model_error_locator.wait_for(state='visible', timeout=500)
+        error_text = await model_error_locator.text_content(timeout=500)
+        if error_text and error_text.strip():
+            logger.error(f"[{req_id}]    检测到模型错误: {error_text.strip()}")
+            return error_text.strip()
+    except PlaywrightAsyncError:
+        pass
+    except Exception as e:
+        logger.debug(f"[{req_id}]    检查模型错误时出错: {e}")
+    
+    # 检查传统的toast错误
     error_toast_locator = page.locator(ERROR_TOAST_SELECTOR).last
     try:
         await error_toast_locator.wait_for(state='visible', timeout=500)
@@ -422,6 +437,41 @@ async def detect_and_extract_page_error(page: AsyncPage, req_id: str) -> Optiona
     except Exception as e:
         logger.warning(f"[{req_id}]    检查页面错误时出错: {e}")
         return None
+
+async def detect_quota_error(page: AsyncPage, req_id: str) -> tuple[bool, str]:
+    """检测quota/rate limit错误
+    
+    Returns:
+        tuple[bool, str]: (是否检测到quota错误, 错误消息)
+    """
+    try:
+        from config.selectors import MODEL_ERROR_SELECTOR
+        model_error_locator = page.locator(MODEL_ERROR_SELECTOR)
+        
+        # 检查是否有模型错误元素
+        error_count = await model_error_locator.count()
+        if error_count > 0:
+            # 获取最新的错误消息
+            error_element = model_error_locator.last
+            error_text = await error_element.text_content(timeout=1000)
+            
+            if error_text:
+                error_text = error_text.strip()
+                # 检查是否是rate limit相关的错误
+                if any(keyword in error_text.lower() for keyword in [
+                    'rate limit', 'quota', 'exceeded', 'reached your', 'try again later',
+                    '速率限制', '配额', '已达到', '请稍后重试'
+                ]):
+                    logger.warning(f"[{req_id}] 检测到quota错误: {error_text}")
+                    return True, error_text
+                else:
+                    logger.info(f"[{req_id}] 检测到模型错误但非quota: {error_text}")
+                    return False, error_text
+                    
+    except Exception as e:
+        logger.debug(f"[{req_id}] 检查quota错误时出错: {e}")
+    
+    return False, ""
 
 async def save_error_snapshot(error_name: str = 'error'):
     """保存错误快照"""

@@ -44,13 +44,21 @@ except ImportError:
 
 # --- 配置常量 ---
 PYTHON_EXECUTABLE = sys.executable
-ENDPOINT_CAPTURE_TIMEOUT = int(os.environ.get('ENDPOINT_CAPTURE_TIMEOUT', '45'))  # 秒 (from dev)
+ENDPOINT_CAPTURE_TIMEOUT = int(os.environ.get('MULTI_INSTANCE_ENDPOINT_TIMEOUT', os.environ.get('ENDPOINT_CAPTURE_TIMEOUT', '45')))  # 秒 (支持新旧配置名)
 DEFAULT_SERVER_PORT = int(os.environ.get('DEFAULT_FASTAPI_PORT', '2048'))  # FastAPI 服务器端口
 DEFAULT_CAMOUFOX_PORT = int(os.environ.get('DEFAULT_CAMOUFOX_PORT', '9222'))  # Camoufox 调试端口 (如果内部启动需要)
 DEFAULT_STREAM_PORT = int(os.environ.get('STREAM_PORT', '3120'))  # 流式代理服务器端口
 DEFAULT_HELPER_ENDPOINT = os.environ.get('GUI_DEFAULT_HELPER_ENDPOINT', '')  # 外部 Helper 端点
 DEFAULT_AUTH_SAVE_TIMEOUT = int(os.environ.get('AUTH_SAVE_TIMEOUT', '30'))  # 认证保存超时时间
 DEFAULT_SERVER_LOG_LEVEL = os.environ.get('SERVER_LOG_LEVEL', 'INFO')  # 服务器日志级别
+
+# --- 多实例配置常量 ---
+ENABLE_MULTI_INSTANCE = os.environ.get('ENABLE_MULTI_INSTANCE', 'false').lower() == 'true'
+MULTI_INSTANCE_START_PORT = int(os.environ.get('MULTI_INSTANCE_START_PORT', '9222'))
+MULTI_INSTANCE_START_DELAY = int(os.environ.get('MULTI_INSTANCE_START_DELAY', '2'))
+MULTI_INSTANCE_ENDPOINT_TIMEOUT = int(os.environ.get('MULTI_INSTANCE_ENDPOINT_TIMEOUT', '45'))
+MULTI_INSTANCE_AUTH_DIR = os.environ.get('MULTI_INSTANCE_AUTH_DIR', 'auth_profiles/multi')
+
 AUTH_PROFILES_DIR = os.path.join(os.path.dirname(__file__), "auth_profiles")
 ACTIVE_AUTH_DIR = os.path.join(AUTH_PROFILES_DIR, "active")
 SAVED_AUTH_DIR = os.path.join(AUTH_PROFILES_DIR, "saved")
@@ -607,26 +615,27 @@ def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camo
         args.stream_port,  # 流式代理端口
     ]
     
-    # 扫描活动认证目录
+    # 扫描多实例认证目录 (使用环境变量配置)
+    multi_auth_dir = os.path.join(os.path.dirname(__file__), MULTI_INSTANCE_AUTH_DIR)
     auth_files = []
-    if os.path.exists(ACTIVE_AUTH_DIR):
+    if os.path.exists(multi_auth_dir):
         try:
             auth_files = sorted([
-                f for f in os.listdir(ACTIVE_AUTH_DIR)
-                if f.lower().endswith('.json') and os.path.isfile(os.path.join(ACTIVE_AUTH_DIR, f))
+                f for f in os.listdir(multi_auth_dir)
+                if f.lower().endswith('.json') and os.path.isfile(os.path.join(multi_auth_dir, f))
             ])
         except Exception as e:
-            logger.error(f"❌ 扫描活动认证目录失败: {e}")
+            logger.error(f"❌ 扫描多实例认证目录失败: {e}")
             sys.exit(1)
     
     if not auth_files:
-        logger.error(f"❌ 多实例模式错误: 活动认证目录 '{ACTIVE_AUTH_DIR}' 中未找到任何 '.json' 认证文件")
+        logger.error(f"❌ 多实例模式错误: 认证目录 '{multi_auth_dir}' 中未找到任何 '.json' 认证文件")
         sys.exit(1)
     
     logger.info(f"🔍 找到 {len(auth_files)} 个认证文件: {auth_files}")
     
-    # 添加浏览器调试端口到清理列表
-    base_port = args.camoufox_debug_port
+    # 添加浏览器调试端口到清理列表 (使用环境变量配置)
+    base_port = MULTI_INSTANCE_START_PORT
     for i in range(len(auth_files)):
         ports_to_clean.append(base_port + i)
     
@@ -643,12 +652,12 @@ def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camo
     else:
         logger.info("✅ 所有相关端口清理完成")
     
-    # 启动多个浏览器实例
+    # 启动多个浏览器实例 (使用环境变量配置)
     first_ws_endpoint = None
-    base_port = args.camoufox_debug_port
+    base_port = MULTI_INSTANCE_START_PORT
     
     for i, auth_file in enumerate(auth_files):
-        auth_file_path = os.path.join(ACTIVE_AUTH_DIR, auth_file)
+        auth_file_path = os.path.join(multi_auth_dir, auth_file)
         instance_port = base_port + i
         
         logger.info(f"🚀 正在启动浏览器实例 {i+1}/{len(auth_files)}: {auth_file} (固定端口: {instance_port})")
@@ -712,8 +721,8 @@ def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camo
                 # 保存浏览器实例句柄
                 multi_browser_instances.append(browser_proc)
                 
-                logger.info(f"  🎉 浏览器实例 {i+1} 启动完成，等待2秒后启动下一个...")
-                time.sleep(2)  # 等待2秒再启动下一个实例
+                logger.info(f"  🎉 浏览器实例 {i+1} 启动完成，等待{MULTI_INSTANCE_START_DELAY}秒后启动下一个...")
+                time.sleep(MULTI_INSTANCE_START_DELAY)  # 使用环境变量配置的启动间隔
                 
             else:
                 logger.error(f"  ❌ 未能从浏览器实例 {i+1} 捕获WebSocket端点")
@@ -765,7 +774,7 @@ def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camo
     os.environ['SERVER_REDIRECT_PRINT'] = str(args.server_redirect_print).lower()
     os.environ['DEBUG_LOGS_ENABLED'] = str(args.debug_logs).lower()
     os.environ['TRACE_LOGS_ENABLED'] = str(args.trace_logs).lower()
-    os.environ['ACTIVE_AUTH_JSON_PATH'] = os.path.join(ACTIVE_AUTH_DIR, auth_files[0])
+    os.environ['ACTIVE_AUTH_JSON_PATH'] = os.path.join(multi_auth_dir, auth_files[0])
     os.environ['AUTO_SAVE_AUTH'] = str(args.auto_save_auth).lower()
     os.environ['AUTH_SAVE_TIMEOUT'] = str(args.auth_save_timeout)
     os.environ['SERVER_PORT_INFO'] = str(args.server_port)
@@ -1119,9 +1128,13 @@ if __name__ == "__main__":
 
     logger.info("--- 步骤 3: 准备并启动 Camoufox 内部进程 ---")
     
-    # 检查是否启用多实例模式
-    if args.multi:
-        logger.info("🔄 多实例模式已启用")
+    # 检查是否启用多实例模式 (命令行参数或环境变量)
+    enable_multi = args.multi or ENABLE_MULTI_INSTANCE
+    if enable_multi:
+        source = "命令行参数" if args.multi else "环境变量ENABLE_MULTI_INSTANCE"
+        logger.info(f"🔄 多实例模式已启用 (来源: {source})")
+        logger.info(f"  📋 多实例配置: 起始端口={MULTI_INSTANCE_START_PORT}, 启动间隔={MULTI_INSTANCE_START_DELAY}秒, 超时={MULTI_INSTANCE_ENDPOINT_TIMEOUT}秒")
+        logger.info(f"  📁 认证文件目录: {MULTI_INSTANCE_AUTH_DIR}")
         # --headless 标志适用于所有实例
         if args.headless:
             final_launch_mode = 'headless'

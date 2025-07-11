@@ -859,6 +859,9 @@ class PageController:
                     raise
 
             await self._check_disconnect(check_client_disconnected, "After Submit")
+            
+            # 检查是否有quota错误
+            await self._check_quota_error_after_submit(check_client_disconnected)
 
         except Exception as e_input_submit:
             self.logger.error(f"[{self.req_id}] 输入和提交过程中发生错误: {e_input_submit}")
@@ -1020,3 +1023,60 @@ class PageController:
             if not isinstance(e, ClientDisconnectedError):
                 await save_error_snapshot(f"get_response_error_{self.req_id}")
             raise
+    
+    async def _check_quota_error_after_submit(self, check_client_disconnected: Callable) -> None:
+        """提交后检查quota错误并处理降级"""
+        try:
+            from browser_utils.operations import detect_quota_error
+            from config.model_fallback import model_fallback_manager
+            import server
+            
+            # 等待一小段时间让错误元素显示
+            await asyncio.sleep(0.5)
+            
+            # 检测quota错误
+            has_quota_error, error_message = await detect_quota_error(self.page, self.req_id)
+            
+            if has_quota_error:
+                self.logger.warning(f"[{self.req_id}] 检测到quota错误: {error_message}")
+                
+                # 获取当前实例ID和模型ID
+                instance_id = str(getattr(server, 'current_instance_id', 1))
+                current_model = getattr(server, 'current_ai_studio_model_id', None)
+                
+                if current_model:
+                    # 标记模型为不可用
+                    model_fallback_manager.mark_model_quota_exceeded(
+                        instance_id, current_model, error_message
+                    )
+                    
+                    # 尝试获取降级模型
+                    fallback_model = model_fallback_manager.get_fallback_model(
+                        instance_id, current_model
+                    )
+                    
+                    if fallback_model and fallback_model != current_model:
+                        self.logger.info(f"[{self.req_id}] 尝试降级到模型: {fallback_model}")
+                        
+                        # 抛出quota错误异常，让上层处理重试
+                        from api_utils.exceptions import QuotaExceededException
+                        raise QuotaExceededException(
+                            f"Model {current_model} quota exceeded. Fallback to {fallback_model}",
+                            original_model=current_model,
+                            fallback_model=fallback_model,
+                            instance_id=instance_id
+                        )
+                    else:
+                        # 没有可用的降级模型
+                        self.logger.error(f"[{self.req_id}] 无可用的降级模型")
+                        raise HTTPException(
+                            status_code=429,
+                            detail=f"Rate limit exceeded for model {current_model} and no fallback available"
+                        )
+                        
+        except Exception as e:
+            # 如果不是quota相关的异常，记录但不阻止正常流程
+            if not isinstance(e, (QuotaExceededException, HTTPException)):
+                self.logger.debug(f"[{self.req_id}] Quota检查时出错: {e}")
+            else:
+                raise
