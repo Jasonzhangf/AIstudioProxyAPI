@@ -754,6 +754,12 @@ def start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camo
     if first_ws_endpoint:
         os.environ['CAMOUFOX_WS_ENDPOINT'] = first_ws_endpoint
     
+    # 设置多实例端点信息
+    import json
+    multi_instance_data = json.dumps(multi_instance_endpoints)
+    os.environ['MULTI_INSTANCE_ENDPOINTS'] = multi_instance_data
+    logger.info(f"📋 多实例端点信息已设置到环境变量: {len(multi_instance_endpoints)} 个端点")
+    
     os.environ['LAUNCH_MODE'] = final_launch_mode
     os.environ['SERVER_LOG_LEVEL'] = args.server_log_level.upper()
     os.environ['SERVER_REDIRECT_PRINT'] = str(args.server_redirect_print).lower()
@@ -1121,7 +1127,37 @@ if __name__ == "__main__":
             final_launch_mode = 'headless'
         elif args.virtual_display:
             final_launch_mode = 'virtual_headless'
+        elif final_launch_mode == 'debug':
+            # 在debug模式下，多实例也可以正常启动
+            logger.info("📋 debug模式下启动多实例，所有浏览器实例将显示界面")
+        
         start_multi_browser_instances(args, final_launch_mode, simulated_os_for_camoufox)
+        
+        # 多实例模式下跳过单实例Camoufox启动，直接进入服务器启动阶段
+        logger.info("--- 步骤 4: 跳过单实例启动，准备启动API服务器 ---")
+        
+        # start_multi_browser_instances 已经设置了所有必要的环境变量，包括:
+        # - CAMOUFOX_WS_ENDPOINT (主实例端点)
+        # - MULTI_INSTANCE_ENDPOINTS (所有实例端点的JSON数据)
+        # - LAUNCH_MODE, SERVER_LOG_LEVEL 等
+        logger.info("  📋 多实例环境变量已在start_multi_browser_instances中设置")
+        
+        # 启动FastAPI服务器
+        logger.info(f"🚀 启动FastAPI服务器 (端口: {args.server_port})")
+        try:
+            uvicorn.run(
+                app,
+                host="0.0.0.0",
+                port=args.server_port,
+                log_config=None
+            )
+        except Exception as e:
+            logger.error(f"❌ FastAPI服务器启动失败: {e}")
+            cleanup()
+            sys.exit(1)
+        
+        # 如果服务器正常退出，执行清理
+        cleanup()
         sys.exit(0)
     
     # 自动清理Camoufox调试端口

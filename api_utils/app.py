@@ -157,8 +157,16 @@ async def _initialize_multi_instance_if_needed():
     
     # 检查是否有多实例端点信息
     try:
-        import launch_camoufox
-        endpoints = getattr(launch_camoufox, 'multi_instance_endpoints', [])
+        import json
+        import os
+        
+        # 从环境变量读取多实例端点信息
+        multi_instance_data = os.environ.get('MULTI_INSTANCE_ENDPOINTS', '')
+        if not multi_instance_data:
+            server.logger.info("单实例模式，跳过多实例初始化")
+            return
+        
+        endpoints = json.loads(multi_instance_data)
         if not endpoints:
             server.logger.info("单实例模式，跳过多实例初始化")
             return
