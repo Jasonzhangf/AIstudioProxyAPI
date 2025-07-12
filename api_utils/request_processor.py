@@ -795,7 +795,7 @@ async def _handle_playwright_response(req_id: str, request: ChatCompletionReques
 
             try:
                 # 使用PageController获取响应
-                page_controller = PageController(page, logger, req_id)
+                page_controller = PageController(page, logger, req_id, is_streaming=True)
                 final_content = await page_controller.get_response(check_client_disconnected)
                 
             except Exception as e:
@@ -818,49 +818,50 @@ async def _handle_playwright_response(req_id: str, request: ChatCompletionReques
                     raise
                     
             # 继续处理final_content
-            if final_content:
+            try:
+                if final_content:
 
-                # 标记数据接收状态
-                data_receiving = True
+                    # 标记数据接收状态
+                    data_receiving = True
 
-                # 生成流式响应 - 保持Markdown格式
-                # 按行分割以保持换行符和Markdown结构
-                lines = final_content.split('\n')
-                for line_idx, line in enumerate(lines):
-                    # 检查客户端是否断开连接
-                    try:
-                        check_client_disconnected(f"Playwright流式生成器循环 ({req_id}): ")
-                    except ClientDisconnectedError:
-                        logger.info(f"[{req_id}] Playwright流式生成器中检测到客户端断开连接")
-                        # 如果正在接收数据时客户端断开，立即设置done信号
-                        if data_receiving and not completion_event.is_set():
-                            logger.info(f"[{req_id}] Playwright数据接收中客户端断开，立即设置done信号")
-                            completion_event.set()
-                        break
+                    # 生成流式响应 - 保持Markdown格式
+                    # 按行分割以保持换行符和Markdown结构
+                    lines = final_content.split('\n')
+                    for line_idx, line in enumerate(lines):
+                        # 检查客户端是否断开连接
+                        try:
+                            check_client_disconnected(f"Playwright流式生成器循环 ({req_id}): ")
+                        except ClientDisconnectedError:
+                            logger.info(f"[{req_id}] Playwright流式生成器中检测到客户端断开连接")
+                            # 如果正在接收数据时客户端断开，立即设置done信号
+                            if data_receiving and not completion_event.is_set():
+                                logger.info(f"[{req_id}] Playwright数据接收中客户端断开，立即设置done信号")
+                                completion_event.set()
+                            break
 
-                    # 输出当前行的内容（包括空行，以保持Markdown格式）
-                    if line:  # 非空行按字符分块输出
-                        chunk_size = 5  # 每次输出5个字符，平衡速度和体验
-                        for i in range(0, len(line), chunk_size):
-                            chunk = line[i:i+chunk_size]
-                            yield generate_sse_chunk(chunk, req_id, current_ai_studio_model_id or MODEL_NAME)
-                            await asyncio.sleep(0.03)  # 适中的输出速度
+                        # 输出当前行的内容（包括空行，以保持Markdown格式）
+                        if line:  # 非空行按字符分块输出
+                            chunk_size = 5  # 每次输出5个字符，平衡速度和体验
+                            for i in range(0, len(line), chunk_size):
+                                chunk = line[i:i+chunk_size]
+                                yield generate_sse_chunk(chunk, req_id, current_ai_studio_model_id or MODEL_NAME)
+                                await asyncio.sleep(0.03)  # 适中的输出速度
 
-                    # 添加换行符（除了最后一行）
-                    if line_idx < len(lines) - 1:
-                        yield generate_sse_chunk('\n', req_id, current_ai_studio_model_id or MODEL_NAME)
-                        await asyncio.sleep(0.01)
-                
-                # 计算并发送带usage的完成块
-                usage_stats = calculate_usage_stats(
-                    [msg.model_dump() for msg in request.messages],
-                    final_content,
-                    ""  # Playwright模式没有reasoning content
-                )
-                logger.info(f"[{req_id}] Playwright非流式计算的token使用统计: {usage_stats}")
-                
-                # 发送带usage的完成块
-                yield generate_sse_stop_chunk(req_id, current_ai_studio_model_id or MODEL_NAME, "stop", usage_stats)
+                        # 添加换行符（除了最后一行）
+                        if line_idx < len(lines) - 1:
+                            yield generate_sse_chunk('\n', req_id, current_ai_studio_model_id or MODEL_NAME)
+                            await asyncio.sleep(0.01)
+                    
+                    # 计算并发送带usage的完成块
+                    usage_stats = calculate_usage_stats(
+                        [msg.model_dump() for msg in request.messages],
+                        final_content,
+                        ""  # Playwright模式没有reasoning content
+                    )
+                    logger.info(f"[{req_id}] Playwright非流式计算的token使用统计: {usage_stats}")
+                    
+                    # 发送带usage的完成块
+                    yield generate_sse_stop_chunk(req_id, current_ai_studio_model_id or MODEL_NAME, "stop", usage_stats)
                 
             except ClientDisconnectedError:
                 logger.info(f"[{req_id}] Playwright流式生成器中检测到客户端断开连接")
@@ -889,7 +890,7 @@ async def _handle_playwright_response(req_id: str, request: ChatCompletionReques
         return completion_event, submit_button_locator, check_client_disconnected
     else:
         # 使用PageController获取响应
-        page_controller = PageController(page, logger, req_id)
+        page_controller = PageController(page, logger, req_id, is_streaming=False)
         try:
             final_content = await page_controller.get_response(check_client_disconnected)
         except Exception as e:
@@ -978,7 +979,7 @@ async def _handle_quota_fallback(req_id: str, request: ChatCompletionRequest, co
         logger.info(f"[{req_id}] 成功切换到降级模型: {fallback_model}")
         
         # 重新提交请求
-        page_controller = PageController(page, logger, req_id)
+        page_controller = PageController(page, logger, req_id, is_streaming=True)
         
         # 重新提交prompt（假设原始prompt还在textarea中）
         await page_controller.submit_prompt(
@@ -1036,6 +1037,9 @@ async def _process_request_refactored(
             result_future.set_exception(HTTPException(status_code=499, detail=f"[{req_id}] 客户端在处理开始前已断开连接"))
         return None
 
+    # 获取流式模式信息
+    is_streaming = request.stream
+    
     context = await _initialize_request_context(req_id, request)
     context = await _analyze_model_requirements(req_id, context, request)
     
@@ -1050,7 +1054,7 @@ async def _process_request_refactored(
     try:
         await _validate_page_status(req_id, context, check_client_disconnected)
         
-        page_controller = PageController(page, context['logger'], req_id)
+        page_controller = PageController(page, context['logger'], req_id, is_streaming=is_streaming)
 
         await _handle_model_switching(req_id, context, check_client_disconnected)
         await _handle_parameter_cache(req_id, context)

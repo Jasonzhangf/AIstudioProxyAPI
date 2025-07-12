@@ -29,10 +29,11 @@ from .operations import save_error_snapshot, _wait_for_response_completion, _get
 class PageController:
     """封装了与AI Studio页面交互的所有操作。"""
 
-    def __init__(self, page: AsyncPage, logger, req_id: str):
+    def __init__(self, page: AsyncPage, logger, req_id: str, is_streaming: bool = True):
         self.page = page
         self.logger = logger
         self.req_id = req_id
+        self.is_streaming = is_streaming
 
     async def _check_disconnect(self, check_client_disconnected: Callable, stage: str):
         """检查客户端是否断开连接。"""
@@ -895,10 +896,19 @@ class PageController:
 
                 is_mac_determined = "mac" in user_agent_data_platform.lower()
 
-            shortcut_modifier = "Meta" if is_mac_determined else "Control"
+            # 根据Mac系统和流式模式选择快捷键
+            if is_mac_determined:
+                if self.is_streaming:
+                    shortcut_modifier = "Meta"  # Cmd+Enter for streaming mode on Mac
+                else:
+                    shortcut_modifier = "Alt"   # Option+Enter for non-streaming mode on Mac
+            else:
+                shortcut_modifier = "Control"  # Ctrl+Enter for Windows/Linux
+            
             shortcut_key = "Enter"
 
-            self.logger.info(f"[{self.req_id}] 使用快捷键: {shortcut_modifier}+{shortcut_key}")
+            mode_desc = "流式" if self.is_streaming else "非流式"
+            self.logger.info(f"[{self.req_id}] 使用快捷键: {shortcut_modifier}+{shortcut_key} ({mode_desc}模式)")
 
             await prompt_textarea_locator.focus(timeout=5000)
             await self._check_disconnect(check_client_disconnected, "After Input Focus")

@@ -1,0 +1,56 @@
+{
+  "turnId": "turn_1752273816324_ql5sbtgov",
+  "timestamp": "2025-07-11T22:43:37.990Z",
+  "sessionId": "openai_1752273817990",
+  "mode": "openai",
+  "userMessage": {
+    "content": "请详细分析单实例下这个项目的执行流程",
+    "parts": [
+      "请详细分析单实例下这个项目的执行流程"
+    ],
+    "raw": "请详细分析单实例下这个项目的执行流程"
+  },
+  "assistantResponse": {
+    "content": "{\"name\": \"read_many_files\", \"arguments\": {\"paths\": [\"**/*.py\"], \"recursive\": true}}",
+    "toolCalls": [
+      {
+        "callId": "text_guided_1752273817990",
+        "name": "read_many_files",
+        "args": {
+          "paths": [
+            "**/*.py"
+          ],
+          "recursive": true
+        }
+      }
+    ],
+    "raw": {
+      "text": "{\"name\": \"read_many_files\", \"arguments\": {\"paths\": [\"**/*.py\"], \"recursive\": true}}",
+      "content": "{\"name\": \"read_many_files\", \"arguments\": {\"paths\": [\"**/*.py\"], \"recursive\": true}}",
+      "toolCalls": [
+        {
+          "callId": "text_guided_1752273817990",
+          "name": "read_many_files",
+          "args": {
+            "paths": [
+              "**/*.py"
+            ],
+            "recursive": true
+          }
+        }
+      ]
+    }
+  },
+  "context": {
+    "model": "nextcoder-32b-mlx",
+    "temperature": 0.7,
+    "tools": [
+      "read_many_files"
+    ],
+    "approvalMode": "default"
+  },
+  "toolExecutions": [],
+  "metadata": {
+    "duration": 1666
+  }
+}

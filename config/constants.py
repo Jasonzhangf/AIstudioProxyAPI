@@ -33,6 +33,7 @@ except (json.JSONDecodeError, TypeError):
 
 # --- URL模式 ---
 AI_STUDIO_URL_PATTERN = os.environ.get('AI_STUDIO_URL_PATTERN', 'aistudio.google.com/')
+LOGIN_URL_PATTERN = os.environ.get('LOGIN_URL_PATTERN', 'accounts.google.com')
 MODELS_ENDPOINT_URL_CONTAINS = os.environ.get('MODELS_ENDPOINT_URL_CONTAINS', "MakerSuiteService/ListModels")
 
 # --- 输入标记符 ---
@@ -41,6 +42,9 @@ USER_INPUT_END_MARKER_SERVER = os.environ.get('USER_INPUT_END_MARKER_SERVER', "_
 
 # --- 文件名常量 ---
 EXCLUDED_MODELS_FILENAME = os.environ.get('EXCLUDED_MODELS_FILENAME', "excluded_models.txt")
+
+# --- 重试配置 ---
+MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '3'))
 
 # --- 流状态配置 ---
 STREAM_TIMEOUT_LOG_STATE = {

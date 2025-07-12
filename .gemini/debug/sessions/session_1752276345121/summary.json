@@ -1,0 +1,17 @@
+{
+  "sessionId": "session_1752276345121",
+  "mode": "openai",
+  "startTime": "2025-07-11T23:25:45.125Z",
+  "totalTurns": 1,
+  "totalDuration": 15073,
+  "model": "nextcoder-32b-mlx",
+  "recentTurns": [
+    {
+      "turnId": "turn_1752276349085_5pxci0nu7",
+      "timestamp": "2025-07-11T23:26:04.158Z",
+      "userMessage": "请详细分析单实例下这个项目的执行流程...",
+      "assistantResponse": "{\"name\": \"list_directory\", \"arguments\": {\"path\": \".\", \"ignore\": [\"node_modules\", \".git\"]}}...",
+      "toolsUsed": []
+    }
+  ]
+}

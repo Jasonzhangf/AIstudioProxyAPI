@@ -332,7 +332,7 @@ async def _initialize_page_logic(browser: AsyncBrowser):
         pages = temp_context.pages
         target_url_base = f"https://{AI_STUDIO_URL_PATTERN}"
         target_full_url = f"{target_url_base}prompts/new_chat"
-        login_url_pattern = 'accounts.google.com'
+        login_url_pattern = LOGIN_URL_PATTERN
         current_url = ""
         
         # 导入_handle_model_list_response - 需要延迟导入避免循环引用
