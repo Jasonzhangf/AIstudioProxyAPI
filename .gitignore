@@ -250,3 +250,4 @@ browser_utils/generated_*.js
 docker/.env
 docker/my_*.json
 auth_profiles
+.gemini
