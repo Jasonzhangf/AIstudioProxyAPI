@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多实例管理控制台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+        
+        .header .subtitle {
+            opacity: 0.9;
+            margin-top: 0.5rem;
+        }
+        
+        .main-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .tabs {
+            display: flex;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .tab {
+            flex: 1;
+            padding: 1rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            background: none;
+            font-size: 1rem;
+        }
+        
+        .tab.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .tab:hover:not(.active) {
+            background: #f0f0f0;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .card h3 {
+            margin-bottom: 1rem;
+            color: #667eea;
+            font-size: 1.2rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            color: #666;
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .instance-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1rem;
+        }
+        
+        .instance-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 1rem;
+            background: white;
+        }
+        
+        .instance-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        
+        .instance-id {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .instance-status {
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .status-ready {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-busy {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-disabled {
+            background: #e2e3e5;
+            color: #6c757d;
+        }
+        
+        .instance-info {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+        }
+        
+        .instance-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5a6fd8;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #218838;
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .model-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            margin-top: 1rem;
+        }
+        
+        .model-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .model-item:last-child {
+            border-bottom: none;
+        }
+        
+        .model-name {
+            font-weight: bold;
+        }
+        
+        .model-category {
+            font-size: 0.8rem;
+            color: #666;
+            background: #f0f0f0;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            margin-left: 0.5rem;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+        
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+        
+        .refresh-btn {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 1.5rem;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .refresh-btn:hover {
+            background: #5a6fd8;
+            transform: scale(1.1);
+        }
+        
+        @media (max-width: 768px) {
+            .main-container {
+                padding: 1rem;
+            }
+            
+            .header {
+                padding: 1rem;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .instance-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>多实例管理控制台</h1>
+        <div class="subtitle">AI Studio Proxy API 多实例管理系统</div>
+    </header>
+
+    <div class="main-container">
+        <!-- 统计概览 -->
+        <div class="stats-grid" id="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="total-instances">-</div>
+                <div class="stat-label">总实例数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="running-instances">-</div>
+                <div class="stat-label">运行中实例</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="active-requests">-</div>
+                <div class="stat-label">活跃请求</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="total-requests">-</div>
+                <div class="stat-label">总请求数</div>
+            </div>
+        </div>
+
+        <!-- 选项卡导航 -->
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('instances')">实例管理</button>
+            <button class="tab" onclick="showTab('models')">模型管理</button>
+            <button class="tab" onclick="showTab('routing')">路由配置</button>
+            <button class="tab" onclick="showTab('monitoring')">监控面板</button>
+        </div>
+
+        <!-- 实例管理选项卡 -->
+        <div id="instances-tab" class="tab-content active">
+            <div class="card">
+                <h3>实例操作</h3>
+                <button class="btn btn-primary" onclick="discoverInstances()">发现新实例</button>
+                <button class="btn btn-secondary" onclick="refreshInstances()">刷新状态</button>
+            </div>
+            
+            <div class="card">
+                <h3>实例列表</h3>
+                <div id="instances-container" class="loading">加载中...</div>
+            </div>
+        </div>
+
+        <!-- 模型管理选项卡 -->
+        <div id="models-tab" class="tab-content">
+            <div class="card">
+                <h3>全局模型管理</h3>
+                <div id="models-container" class="loading">加载中...</div>
+            </div>
+        </div>
+
+        <!-- 路由配置选项卡 -->
+        <div id="routing-tab" class="tab-content">
+            <div class="card">
+                <h3>路由统计</h3>
+                <div id="routing-stats" class="loading">加载中...</div>
+            </div>
+            
+            <div class="card">
+                <h3>路由配置</h3>
+                <div id="routing-config">
+                    <label>路由策略：</label>
+                    <select id="routing-strategy">
+                        <option value="least_loaded">最少负载</option>
+                        <option value="round_robin">轮询</option>
+                        <option value="random">随机</option>
+                        <option value="model_affinity">模型亲和性</option>
+                    </select>
+                    <br><br>
+                    <label>
+                        <input type="checkbox" id="enable-failover"> 启用故障转移
+                    </label>
+                    <br><br>
+                    <button class="btn btn-primary" onclick="updateRoutingConfig()">更新配置</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 监控面板选项卡 -->
+        <div id="monitoring-tab" class="tab-content">
+            <div class="card">
+                <h3>系统健康状态</h3>
+                <div id="health-status" class="loading">加载中...</div>
+            </div>
+            
+            <div class="card">
+                <h3>活跃请求</h3>
+                <div id="active-requests-list" class="loading">加载中...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 刷新按钮 -->
+    <button class="refresh-btn" onclick="refreshAll()" title="刷新所有数据">
+        ↻
+    </button>
+
+    <script>
+        // 全局状态
+        let currentTab = 'instances';
+        let instances = {};
+        let models = {};
+        let routingData = {};
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshAll();
+            // 每30秒自动刷新
+            setInterval(refreshAll, 30000);
+        });
+
+        // 选项卡切换
+        function showTab(tabName) {
+            // 隐藏所有选项卡内容
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // 移除所有选项卡的活跃状态
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // 显示选中的选项卡
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+            
+            currentTab = tabName;
+            
+            // 根据选项卡加载相应数据
+            switch(tabName) {
+                case 'instances':
+                    loadInstances();
+                    break;
+                case 'models':
+                    loadModels();
+                    break;
+                case 'routing':
+                    loadRoutingData();
+                    break;
+                case 'monitoring':
+                    loadMonitoringData();
+                    break;
+            }
+        }
+
+        // API调用辅助函数
+        async function apiCall(endpoint, method = 'GET', data = null) {
+            try {
+                const options = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                };
+                
+                if (data) {
+                    options.body = JSON.stringify(data);
+                }
+                
+                const response = await fetch('/api/management' + endpoint, options);
+                const result = await response.json();
+                
+                if (!result.success) {
+                    throw new Error(result.message || '操作失败');
+                }
+                
+                return result.data;
+            } catch (error) {
+                console.error('API调用失败:', error);
+                showError('操作失败: ' + error.message);
+                throw error;
+            }
+        }
+
+        // 显示错误信息
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            document.querySelector('.main-container').insertBefore(errorDiv, document.querySelector('.stats-grid'));
+            
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+
+        // 显示成功信息
+        function showSuccess(message) {
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success';
+            successDiv.textContent = message;
+            document.querySelector('.main-container').insertBefore(successDiv, document.querySelector('.stats-grid'));
+            
+            setTimeout(() => {
+                successDiv.remove();
+            }, 3000);
+        }
+
+        // 刷新所有数据
+        async function refreshAll() {
+            try {
+                await loadStats();
+                if (currentTab === 'instances') {
+                    await loadInstances();
+                } else if (currentTab === 'models') {
+                    await loadModels();
+                } else if (currentTab === 'routing') {
+                    await loadRoutingData();
+                } else if (currentTab === 'monitoring') {
+                    await loadMonitoringData();
+                }
+            } catch (error) {
+                console.error('刷新数据失败:', error);
+            }
+        }
+
+        // 加载统计数据
+        async function loadStats() {
+            try {
+                const health = await apiCall('/health');
+                
+                document.getElementById('total-instances').textContent = health.instance_manager.total_instances;
+                document.getElementById('running-instances').textContent = health.instance_manager.running_instances;
+                document.getElementById('active-requests').textContent = health.request_router.active_requests;
+                document.getElementById('total-requests').textContent = health.request_router.total_requests || 0;
+            } catch (error) {
+                console.error('加载统计数据失败:', error);
+            }
+        }
+
+        // 加载实例数据
+        async function loadInstances() {
+            try {
+                const data = await apiCall('/instances');
+                instances = data;
+                renderInstances();
+            } catch (error) {
+                document.getElementById('instances-container').innerHTML = '<div class="error">加载实例数据失败</div>';
+            }
+        }
+
+        // 渲染实例列表
+        function renderInstances() {
+            const container = document.getElementById('instances-container');
+            
+            if (Object.keys(instances.running_instances).length === 0 && Object.keys(instances.all_configs).length === 0) {
+                container.innerHTML = '<div class="loading">暂无实例</div>';
+                return;
+            }
+            
+            let html = '<div class="instance-grid">';
+            
+            // 合并运行中的实例和所有配置
+            const allInstances = { ...instances.all_configs };
+            
+            Object.keys(allInstances).forEach(instanceId => {
+                const config = instances.all_configs[instanceId];
+                const state = instances.running_instances[instanceId];
+                
+                const status = state ? state.status : 'stopped';
+                const statusClass = `status-${status}`;
+                
+                html += `
+                    <div class="instance-card">
+                        <div class="instance-header">
+                            <span class="instance-id">${instanceId}</span>
+                            <span class="instance-status ${statusClass}">${status.toUpperCase()}</span>
+                        </div>
+                        <div class="instance-info">
+                            <div><strong>邮箱:</strong> ${config.email}</div>
+                            <div><strong>端口:</strong> ${config.port}</div>
+                            <div><strong>启用:</strong> ${config.enabled ? '是' : '否'}</div>
+                            ${state ? `
+                                <div><strong>活跃请求:</strong> ${state.active_requests}/${config.max_concurrent_requests}</div>
+                                <div><strong>总请求:</strong> ${state.total_requests}</div>
+                            ` : ''}
+                        </div>
+                        <div class="instance-actions">
+                            ${config.enabled ? 
+                                `<button class="btn btn-danger" onclick="toggleInstance('${instanceId}', false)">禁用</button>` :
+                                `<button class="btn btn-success" onclick="toggleInstance('${instanceId}', true)">启用</button>`
+                            }
+                            <button class="btn btn-primary" onclick="showInstanceModels('${instanceId}')">模型配置</button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // 发现新实例
+        async function discoverInstances() {
+            try {
+                const result = await apiCall('/instances/discover', 'POST');
+                showSuccess(`发现了 ${result.discovered_profiles.length} 个认证配置，创建了 ${result.new_instances.length} 个新实例`);
+                await loadInstances();
+            } catch (error) {
+                console.error('发现实例失败:', error);
+            }
+        }
+
+        // 刷新实例
+        async function refreshInstances() {
+            await loadInstances();
+            showSuccess('实例状态已刷新');
+        }
+
+        // 切换实例启用状态
+        async function toggleInstance(instanceId, enabled) {
+            try {
+                const action = enabled ? 'enable' : 'disable';
+                await apiCall(`/instances/${instanceId}/${action}`, 'POST');
+                showSuccess(`实例 ${instanceId} 已${enabled ? '启用' : '禁用'}`);
+                await loadInstances();
+            } catch (error) {
+                console.error('切换实例状态失败:', error);
+            }
+        }
+
+        // 显示实例模型配置
+        async function showInstanceModels(instanceId) {
+            try {
+                const modelConfig = await apiCall(`/models/instances/${instanceId}`);
+                alert(`实例 ${instanceId} 的模型配置:\n白名单: ${modelConfig.whitelist.length} 个模型\n黑名单: ${modelConfig.blacklist.length} 个模型\n可用模型: ${modelConfig.available_models.length} 个`);
+            } catch (error) {
+                console.error('获取实例模型配置失败:', error);
+            }
+        }
+
+        // 加载模型数据
+        async function loadModels() {
+            try {
+                const data = await apiCall('/models');
+                models = data;
+                renderModels();
+            } catch (error) {
+                document.getElementById('models-container').innerHTML = '<div class="error">加载模型数据失败</div>';
+            }
+        }
+
+        // 渲染模型列表
+        function renderModels() {
+            const container = document.getElementById('models-container');
+            
+            if (models.models.length === 0) {
+                container.innerHTML = '<div class="loading">暂无模型</div>';
+                return;
+            }
+            
+            let html = '<div class="model-list">';
+            
+            models.models.forEach(model => {
+                html += `
+                    <div class="model-item">
+                        <div>
+                            <span class="model-name">${model.display_name}</span>
+                            <span class="model-category">${model.category}</span>
+                        </div>
+                        <div>
+                            ${model.enabled ? 
+                                `<button class="btn btn-danger" onclick="toggleModel('${model.id}', false)">禁用</button>` :
+                                `<button class="btn btn-success" onclick="toggleModel('${model.id}', true)">启用</button>`
+                            }
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // 切换模型启用状态
+        async function toggleModel(modelId, enabled) {
+            try {
+                const action = enabled ? 'enable' : 'disable';
+                await apiCall(`/models/${modelId}/${action}`, 'POST');
+                showSuccess(`模型 ${modelId} 已${enabled ? '启用' : '禁用'}`);
+                await loadModels();
+            } catch (error) {
+                console.error('切换模型状态失败:', error);
+            }
+        }
+
+        // 加载路由数据
+        async function loadRoutingData() {
+            try {
+                const data = await apiCall('/routing');
+                routingData = data;
+                renderRoutingData();
+            } catch (error) {
+                document.getElementById('routing-stats').innerHTML = '<div class="error">加载路由数据失败</div>';
+            }
+        }
+
+        // 渲染路由数据
+        function renderRoutingData() {
+            const statsContainer = document.getElementById('routing-stats');
+            const stats = routingData.statistics.global_stats;
+            
+            let html = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.total_requests}</div>
+                        <div class="stat-label">总请求数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.successful_requests}</div>
+                        <div class="stat-label">成功请求</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.failed_requests}</div>
+                        <div class="stat-label">失败请求</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.average_response_time.toFixed(2)}s</div>
+                        <div class="stat-label">平均响应时间</div>
+                    </div>
+                </div>
+            `;
+            
+            statsContainer.innerHTML = html;
+            
+            // 更新配置表单
+            document.getElementById('routing-strategy').value = routingData.configuration.default_strategy;
+            document.getElementById('enable-failover').checked = routingData.configuration.enable_failover;
+        }
+
+        // 更新路由配置
+        async function updateRoutingConfig() {
+            try {
+                const strategy = document.getElementById('routing-strategy').value;
+                const enableFailover = document.getElementById('enable-failover').checked;
+                
+                await apiCall('/routing/config', 'PUT', {
+                    strategy: strategy,
+                    enable_failover: enableFailover
+                });
+                
+                showSuccess('路由配置已更新');
+                await loadRoutingData();
+            } catch (error) {
+                console.error('更新路由配置失败:', error);
+            }
+        }
+
+        // 加载监控数据
+        async function loadMonitoringData() {
+            try {
+                const health = await apiCall('/health');
+                const routing = await apiCall('/routing');
+                
+                renderHealthStatus(health);
+                renderActiveRequests(routing.active_requests);
+            } catch (error) {
+                document.getElementById('health-status').innerHTML = '<div class="error">加载监控数据失败</div>';
+            }
+        }
+
+        // 渲染健康状态
+        function renderHealthStatus(health) {
+            const container = document.getElementById('health-status');
+            
+            let html = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">${health.request_router.status}</div>
+                        <div class="stat-label">系统状态</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${health.request_router.success_rate.toFixed(1)}%</div>
+                        <div class="stat-label">成功率</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${health.instance_manager.running_instances}/${health.instance_manager.total_instances}</div>
+                        <div class="stat-label">可用实例</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${health.model_manager.enabled_models}/${health.model_manager.total_models}</div>
+                        <div class="stat-label">可用模型</div>
+                    </div>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+        }
+
+        // 渲染活跃请求
+        function renderActiveRequests(activeRequests) {
+            const container = document.getElementById('active-requests-list');
+            
+            if (activeRequests.length === 0) {
+                container.innerHTML = '<div class="loading">暂无活跃请求</div>';
+                return;
+            }
+            
+            let html = '<div class="model-list">';
+            
+            activeRequests.forEach(request => {
+                const duration = request.duration.toFixed(1);
+                html += `
+                    <div class="model-item">
+                        <div>
+                            <span class="model-name">${request.request_id.substring(0, 8)}...</span>
+                            <span class="model-category">${request.model_id || 'Unknown'}</span>
+                        </div>
+                        <div>
+                            <span>实例: ${request.instance_id}</span><br>
+                            <span>耗时: ${duration}s</span>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

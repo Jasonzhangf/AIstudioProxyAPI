@@ -1,0 +1,29 @@
+{
+  "general": {
+    "enabled": true,
+    "log_level": "INFO"
+  },
+  "instances": {
+    "auto_start": true,
+    "max_instances": 5,
+    "default_launch_mode": "AUTO",
+    "default_max_concurrent_requests": 1
+  },
+  "routing": {
+    "strategy": "PRIMARY_FIRST",
+    "enable_failover": true,
+    "request_timeout": 300,
+    "max_retries": 2
+  },
+  "error_recovery": {
+    "enabled": true,
+    "max_recovery_attempts": 3,
+    "interactive_mode": false,
+    "save_screenshots": true
+  },
+  "monitoring": {
+    "enabled": true,
+    "metrics_interval": 60,
+    "health_check_interval": 30
+  }
+}

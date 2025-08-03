@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multi-Instance System Dashboard</title>
+  <link rel="stylesheet" href="/static/multi-instance/styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Multi-Instance System Dashboard</h1>
+      <p>Monitor and manage AI Studio proxy instances</p>
+    </div>
+    
+    <div id="message" class="message" style="display: none;"></div>
+    
+    <div class="status-grid" id="statusGrid">
+      <!-- Status cards will be loaded dynamically -->
+      <div class="status-card">
+        <h3>Loading...</h3>
+        <div class="status-value">...</div>
+      </div>
+    </div>
+    
+    <div class="instances-grid" id="instancesGrid">
+      <!-- Instance cards will be loaded dynamically -->
+      <div class="instance-card">
+        <div class="instance-header">
+          <span class="instance-id">Loading...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <button class="refresh-btn" onclick="loadData()" title="Refresh data">🔄</button>
+  
+  <script src="/static/multi-instance/dashboard.js"></script>
+</body>
+</html>

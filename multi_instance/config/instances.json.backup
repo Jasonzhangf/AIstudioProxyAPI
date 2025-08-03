@@ -1,0 +1,41 @@
+{
+  "instances": [
+    {
+      "instance_id": "instance_1_jason_at_z-cam_com_0718",
+      "auth_profile_path": "auth_profiles/multi/jason_at_z-cam_com_0718.json",
+      "email": "jason@z-cam.com",
+      "enabled": true,
+      "port": 9222,
+      "model_whitelist": [],
+      "model_blacklist": [],
+      "max_concurrent_requests": 1,
+      "created_at": 1752763325.654421,
+      "last_used_at": 1752763325.654421
+    },
+    {
+      "instance_id": "instance_2_jason_zhangfan_at_gmail_com_0718_1752807696",
+      "auth_profile_path": "auth_profiles/multi/jason_zhangfan_at_gmail_com_0718_1752807696.json",
+      "email": "jason.zhangfan@gmail.com",
+      "enabled": true,
+      "port": 9223,
+      "model_whitelist": [],
+      "model_blacklist": [],
+      "max_concurrent_requests": 1,
+      "created_at": 1752763325.654421,
+      "last_used_at": 1752763325.654421
+    },
+    {
+      "instance_id": "instance_3_nguyentronghuebich_at_gmail_com",
+      "auth_profile_path": "auth_profiles/multi/nguyentronghuebich@gmail.com.json",
+      "email": "nguyentronghuebich@gmail.com",
+      "enabled": true,
+      "port": 9224,
+      "model_whitelist": [],
+      "model_blacklist": [],
+      "max_concurrent_requests": 1,
+      "created_at": 1752763325.654421,
+      "last_used_at": 1752763325.654421
+    }
+  ],
+  "routing_weights": {}
+}
