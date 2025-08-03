@@ -15,12 +15,13 @@ class ProxyServer:
     """
     Asynchronous HTTPS proxy server with SSL inspection capabilities
     """
-    def __init__(self, host='0.0.0.0', port=3120, intercept_domains=None, upstream_proxy=None, queue: Optional[multiprocessing.Queue]=None):
+    def __init__(self, host='0.0.0.0', port=3120, intercept_domains=None, upstream_proxy=None, queue: Optional[multiprocessing.Queue]=None, entity_id: str = "default"):
         self.host = host
         self.port = port
         self.intercept_domains = intercept_domains or []
         self.upstream_proxy = upstream_proxy
         self.queue = queue
+        self.entity_id = entity_id
         
         # Initialize components
         self.cert_manager = CertificateManager()
@@ -30,6 +31,9 @@ class ProxyServer:
         log_dir = Path('logs')
         log_dir.mkdir(exist_ok=True)
         self.interceptor = HttpInterceptor(str(log_dir))
+        
+        # Set up debug manager
+        self.debug_manager = get_debug_manager()
         
         # Set up logging
         self.logger = logging.getLogger('proxy_server')
@@ -55,6 +59,14 @@ class ProxyServer:
         Handle a client connection
         """
         try:
+            # Capture debug data for client handling start
+            client_debug_data = {
+                "client_address": writer.get_extra_info('peername'),
+                "timestamp": time.time(),
+                "entity_id": self.entity_id
+            }
+            self.debug_manager.capture_data("client_handling_start", self.entity_id, client_debug_data)
+            
             # Read the initial request line
             request_line = await reader.readline()
             request_line = request_line.decode('utf-8').strip()
@@ -69,9 +81,25 @@ class ProxyServer:
             if method == 'CONNECT':
                 # Handle HTTPS connection
                 await self._handle_connect(reader, writer, target)
+                
+            # Capture debug data for client handling end
+            client_end_debug_data = {
+                "client_address": writer.get_extra_info('peername'),
+                "timestamp": time.time(),
+                "entity_id": self.entity_id
+            }
+            self.debug_manager.capture_data("client_handling_end", self.entity_id, client_end_debug_data)
 
         except Exception as e:
             self.logger.error(f"Error handling client: {e}")
+            # Capture debug data for errors
+            error_debug_data = {
+                "error": str(e),
+                "client_address": writer.get_extra_info('peername'),
+                "timestamp": time.time(),
+                "entity_id": self.entity_id
+            }
+            self.debug_manager.capture_data("client_handling_error", self.entity_id, error_debug_data)
         finally:
             writer.close()
     
@@ -84,11 +112,31 @@ class ProxyServer:
         port = int(port)
         # Determine if we should intercept this connection
         intercept = self.should_intercept(host)
+        
+        # Capture debug data for connection decision
+        debug_data = {
+            "host": host,
+            "port": port,
+            "target": target,
+            "intercept": intercept,
+            "intercept_domains": self.intercept_domains,
+            "entity_id": self.entity_id
+        }
+        self.debug_manager.capture_data("connection_decision", self.entity_id, debug_data)
 
         if intercept:
             self.logger.info(f"Sniff HTTPS requests to : {target}")
 
             self.cert_manager.get_domain_cert(host)
+            
+            # Capture debug data for certificate generation
+            cert_debug_data = {
+                "host": host,
+                "cert_path": str(self.cert_manager.cert_dir / f"{host}.crt"),
+                "key_path": str(self.cert_manager.cert_dir / f"{host}.key"),
+                "entity_id": self.entity_id
+            }
+            self.debug_manager.capture_data("cert_generation", self.entity_id, cert_debug_data)
 
             # Send 200 Connection Established to the client
             writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
@@ -149,12 +197,28 @@ class ProxyServer:
                     host, port, ssl=ssl.create_default_context()
                 )
                 
+                # Capture debug data for interception start
+                interception_debug_data = {
+                    "host": host,
+                    "port": port,
+                    "entity_id": self.entity_id
+                }
+                self.debug_manager.capture_data("interception_start", self.entity_id, interception_debug_data)
+                
                 # Start bidirectional forwarding with interception
                 await self._forward_data_with_interception(
                     client_reader, client_writer,
                     server_reader, server_writer,
                     host
                 )
+                
+                # Capture debug data for interception end
+                interception_end_debug_data = {
+                    "host": host,
+                    "port": port,
+                    "entity_id": self.entity_id
+                }
+                self.debug_manager.capture_data("interception_end", self.entity_id, interception_end_debug_data)
             except Exception as e:
                 # self.logger.error(f"Error connecting to server {host}:{port}: {e}")
                 client_writer.close()
