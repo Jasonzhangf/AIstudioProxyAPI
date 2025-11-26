@@ -1,0 +1,40 @@
+{
+  "accounts": [
+    {
+      "id": "test_account_1",
+      "auth_file": "auth_profiles/saved/auth_state_1732601234.json",
+      "port": 2148,
+      "weight": 1,
+      "enabled": true,
+      "max_concurrent": 3
+    },
+    {
+      "id": "test_account_2",
+      "auth_file": "auth_profiles/saved/auth_state_1732601234.json",
+      "port": 2149,
+      "weight": 2,
+      "enabled": true,
+      "max_concurrent": 3
+    },
+    {
+      "id": "test_account_3",
+      "auth_file": "auth_profiles/saved/auth_state_1732601234.json",
+      "port": 2150,
+      "weight": 1,
+      "enabled": true,
+      "max_concurrent": 3
+    }
+  ],
+  "router": {
+    "port": 8180,
+    "host": "0.0.0.0",
+    "strategy": "roundrobin",
+    "health_check_interval": 10,
+    "health_check_timeout": 5,
+    "auto_restart": false
+  },
+  "logging": {
+    "level": "DEBUG",
+    "file": "logs/test_router.log"
+  }
+}
